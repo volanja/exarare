@@ -1,6 +1,8 @@
+mod diff;
 mod event;
 mod session;
 mod shell;
+mod snapshot;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -35,6 +37,9 @@ enum Cmd {
         /// Shell to run (bash or zsh). Defaults to $SHELL.
         #[arg(long)]
         shell: Option<PathBuf>,
+        /// Directory to snapshot for file changes. Repeatable; defaults to /etc.
+        #[arg(long = "watch", value_name = "PATH")]
+        watch: Vec<PathBuf>,
     },
     /// Finish the current recording (same as typing `exit` in the recording shell)
     Stop,
@@ -42,6 +47,11 @@ enum Cmd {
     Status,
     /// List recorded sessions
     List,
+    /// Show the file changes of a session (defaults to the most recent one)
+    Diff {
+        /// Session id, as shown by `exarare list`
+        session: Option<String>,
+    },
     /// Insert a heading into the runbook, e.g. `exarare note "Install nginx"`
     Note {
         #[arg(required = true)]
@@ -72,10 +82,11 @@ enum Hook {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Cmd::Start { name, shell } => start(name, shell),
+        Cmd::Start { name, shell, watch } => start(name, shell, watch),
         Cmd::Stop => stop(),
         Cmd::Status => status(),
         Cmd::List => list(),
+        Cmd::Diff { session } => show_diff(session),
         Cmd::Note { text } => note(text.join(" ")),
         Cmd::Hook { hook } => {
             // Never disturb the user's shell: a lost event is better than an error on every prompt.
@@ -92,15 +103,21 @@ fn main() -> ExitCode {
     }
 }
 
-fn start(name: Option<String>, shell: Option<PathBuf>) -> Result<ExitCode> {
+fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> Result<ExitCode> {
     if std::env::var_os(ENV_SESSION_DIR).is_some() {
         bail!("already recording in this shell (run `exarare status`)");
     }
     let shell = shell::resolve(shell);
     let kind = shell::Kind::detect(&shell)?;
+    let watch_roots = if watch.is_empty() {
+        session::default_watch_roots()
+    } else {
+        watch
+    };
 
-    let mut session = Session::create(name, &shell)?;
+    let mut session = Session::create(name, &shell, watch_roots)?;
     session.append(EventKind::SessionStart)?;
+    take_snapshot(&session, "before")?;
     eprintln!(
         "exarare: recording session {} — type `exit` or run `exarare stop` to finish",
         session.meta.id
@@ -119,13 +136,53 @@ fn start(name: Option<String>, shell: Option<PathBuf>) -> Result<ExitCode> {
     session.save_meta()?;
     result?;
 
+    let changes = match take_snapshot(&session, "after") {
+        Ok(_) => file_changes(&session).map(|c| c.len()).unwrap_or(0),
+        Err(e) => {
+            eprintln!("exarare: {e:#}");
+            0
+        }
+    };
     let commands = count_commands(&session.events()?);
     eprintln!(
-        "exarare: finished session {} ({commands} commands) — saved in {}",
+        "exarare: finished session {} ({commands} commands, {changes} changed files) — saved in {}",
         session.meta.id,
         session.dir.display()
     );
+    if changes > 0 {
+        eprintln!(
+            "exarare: run `exarare diff {}` to see them",
+            session.meta.id
+        );
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Walks the watched directories and stores the `before` or `after` snapshot.
+fn take_snapshot(session: &Session, which: &str) -> Result<()> {
+    let out = session.snapshot_path(which);
+    std::fs::create_dir_all(out.parent().expect("snapshot path has a parent"))?;
+    let rules = snapshot::Rules::defaults()?;
+    let stats = snapshot::capture(
+        &session.meta.watch_roots,
+        &out,
+        &session.blobs_dir(),
+        &rules,
+    )
+    .with_context(|| format!("failed to take the {which} snapshot"))?;
+    if stats.unreadable > 0 {
+        eprintln!(
+            "exarare: {} path(s) could not be read while snapshotting",
+            stats.unreadable
+        );
+    }
+    Ok(())
+}
+
+fn file_changes(session: &Session) -> Result<Vec<diff::Change>> {
+    let before = snapshot::load(&session.snapshot_path("before"))?;
+    let after = snapshot::load(&session.snapshot_path("after"))?;
+    Ok(diff::compare(&before, &after))
 }
 
 fn stop() -> Result<ExitCode> {
@@ -152,6 +209,14 @@ fn status() -> Result<ExitCode> {
     }
     println!("  started:  {}", meta.started_at);
     println!("  commands: {}", count_commands(&session.events()?));
+    println!(
+        "  watching: {}",
+        meta.watch_roots
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     println!("  data:     {}", session.dir.display());
     Ok(ExitCode::SUCCESS)
 }
@@ -177,6 +242,26 @@ fn list() -> Result<ExitCode> {
             s.meta.name.as_deref().unwrap_or("")
         );
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn show_diff(id: Option<String>) -> Result<ExitCode> {
+    let sessions = Session::list()?;
+    let session = match &id {
+        Some(id) => sessions
+            .into_iter()
+            .find(|s| &s.meta.id == id)
+            .with_context(|| format!("no session {id}"))?,
+        None => sessions.into_iter().next_back().context("no sessions")?,
+    };
+    if !session.snapshot_path("after").exists() {
+        bail!(
+            "session {} has no `after` snapshot (still recording, or it was aborted)",
+            session.meta.id
+        );
+    }
+    let changes = file_changes(&session)?;
+    print!("{}", diff::render(&changes, &session.blobs_dir()));
     Ok(ExitCode::SUCCESS)
 }
 

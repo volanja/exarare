@@ -3,11 +3,13 @@
 //! Each test binary includes this module, so not every helper is used by all of them.
 #![allow(dead_code)]
 
+use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
+use tempfile::TempDir;
 
 pub fn which(name: &str) -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
@@ -34,12 +36,17 @@ pub struct Recorded {
     pub exit_code: Option<i64>,
 }
 
-pub struct Session {
+/// What one recorded session left behind.
+pub struct Recording {
     pub commands: Vec<Recorded>,
     pub notes: Vec<String>,
+    pub session_id: String,
+    pub session_dir: PathBuf,
+    pub data_dir: PathBuf,
+    _tmp: TempDir,
 }
 
-impl Session {
+impl Recording {
     pub fn command_lines(&self) -> Vec<&str> {
         self.commands.iter().map(|c| c.cmd.as_str()).collect()
     }
@@ -47,18 +54,47 @@ impl Session {
     pub fn find(&self, cmd: &str) -> Option<&Recorded> {
         self.commands.iter().find(|c| c.cmd == cmd)
     }
+
+    /// Runs another exarare subcommand against this session's data.
+    pub fn exarare(&self, args: &[&str]) -> String {
+        let out = Command::new(exarare_bin())
+            .args(args)
+            .env("EXARARE_HOME", &self.data_dir)
+            .env_remove("EXARARE_SESSION_DIR")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "exarare {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    }
 }
 
 /// Runs `exarare start` with `script` on stdin and returns what was recorded.
-pub fn record(shell: &Path, script: &str) -> Session {
+pub fn record(shell: &Path, script: &str) -> Recording {
+    record_with(shell, script, &[])
+}
+
+/// Same, with extra arguments for `exarare start` (e.g. `--watch`).
+pub fn record_with(shell: &Path, script: &str, extra: &[&OsStr]) -> Recording {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     let data = tmp.path().join("data");
+    // Keep the default snapshot of /etc out of the way unless a test asks for it.
+    let quiet_root = tmp.path().join("watch");
+    std::fs::create_dir(&quiet_root).unwrap();
 
-    let mut child = Command::new(exarare_bin())
-        .args(["start", "--name", "test", "--shell"])
-        .arg(shell)
+    let mut cmd = Command::new(exarare_bin());
+    cmd.args(["start", "--name", "test", "--shell"]).arg(shell);
+    if extra.is_empty() {
+        cmd.arg("--watch").arg(&quiet_root);
+    } else {
+        cmd.args(extra);
+    }
+    let mut child = cmd
         .env("HOME", &home)
         .env("EXARARE_HOME", &data)
         .env_remove("EXARARE_SESSION_DIR")
@@ -81,12 +117,13 @@ pub fn record(shell: &Path, script: &str) -> Session {
         .map(|e| e.unwrap().path())
         .collect();
     assert_eq!(sessions.len(), 1);
+    let session_dir = sessions.into_iter().next().unwrap();
     let meta: Value =
-        serde_json::from_str(&std::fs::read_to_string(sessions[0].join("meta.json")).unwrap())
+        serde_json::from_str(&std::fs::read_to_string(session_dir.join("meta.json")).unwrap())
             .unwrap();
     assert!(meta["ended_at"].is_string(), "session was not finished");
 
-    let events: Vec<Value> = std::fs::read_to_string(sessions[0].join("events.jsonl"))
+    let events: Vec<Value> = std::fs::read_to_string(session_dir.join("events.jsonl"))
         .unwrap()
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
@@ -111,5 +148,12 @@ pub fn record(shell: &Path, script: &str) -> Session {
             _ => {}
         }
     }
-    Session { commands, notes }
+    Recording {
+        commands,
+        notes,
+        session_id: meta["id"].as_str().unwrap().to_string(),
+        session_dir,
+        data_dir: data,
+        _tmp: tmp,
+    }
 }

@@ -23,6 +23,9 @@ pub struct Meta {
     pub hostname: Option<String>,
     pub user: Option<String>,
     pub shell: String,
+    /// Directories snapshotted before and after the session.
+    #[serde(default = "default_watch_roots")]
+    pub watch_roots: Vec<PathBuf>,
     #[serde(with = "time::serde::rfc3339")]
     pub started_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option", default)]
@@ -46,6 +49,10 @@ impl std::fmt::Display for Status {
             Status::Aborted => "aborted",
         })
     }
+}
+
+pub fn default_watch_roots() -> Vec<PathBuf> {
+    vec![PathBuf::from("/etc")]
 }
 
 /// Root of all exarare data. `EXARARE_HOME` overrides the XDG location.
@@ -79,7 +86,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn create(name: Option<String>, shell: &Path) -> Result<Self> {
+    pub fn create(name: Option<String>, shell: &Path, watch_roots: Vec<PathBuf>) -> Result<Self> {
         let now = OffsetDateTime::now_utc();
         let stamp = now.format(format_description!(
             "[year][month][day]-[hour][minute][second]"
@@ -96,6 +103,7 @@ impl Session {
                 .and_then(|h| h.into_string().ok()),
             user: std::env::var("USER").ok(),
             shell: shell.display().to_string(),
+            watch_roots,
             started_at: now,
             ended_at: None,
             shell_pid: None,
@@ -150,6 +158,15 @@ impl Session {
         fs::write(&tmp, serde_json::to_string_pretty(&self.meta)? + "\n")?;
         fs::rename(&tmp, &path)?;
         Ok(())
+    }
+
+    /// Path of the `before` or `after` snapshot.
+    pub fn snapshot_path(&self, which: &str) -> PathBuf {
+        self.dir.join("snapshots").join(format!("{which}.jsonl"))
+    }
+
+    pub fn blobs_dir(&self) -> PathBuf {
+        self.dir.join("blobs")
     }
 
     pub fn append(&self, kind: EventKind) -> Result<()> {

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{Recorded, Session, record, which, with_exarare_on_path};
+use common::{Recorded, Recording, record, which, with_exarare_on_path};
 
 const SCRIPT: &str =
     "echo hello\nfalse\ncd /tmp && ls >/dev/null\nexarare note install step\nexit\n";
@@ -23,11 +23,11 @@ fn expected() -> Vec<Recorded> {
     .collect()
 }
 
-fn check(session: Session) {
+fn check(recording: Recording) {
     // The PATH line prepended by the harness is recorded first.
-    assert!(session.commands[0].cmd.starts_with("PATH="));
-    assert_eq!(session.commands[1..], expected());
-    assert_eq!(session.notes, vec!["install step".to_string()]);
+    assert!(recording.commands[0].cmd.starts_with("PATH="));
+    assert_eq!(recording.commands[1..], expected());
+    assert_eq!(recording.notes, vec!["install step".to_string()]);
 }
 
 #[test]

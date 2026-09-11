@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-test:
+    name: lint and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  el:
+    name: integration (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - almalinux:8
+          - almalinux:9
+          - almalinux:10
+          - redhat/ubi8
+          - redhat/ubi9
+          - redhat/ubi10
+    steps:
+      # Before checkout, which needs git in the container. zsh is installed so
+      # the zsh hook is covered too; bash differs per release (4.4 on EL8,
+      # 5.1 on EL9, 5.2 on EL10).
+      - name: Install build and test dependencies
+        run: |
+          dnf install -y git gcc zsh procps-ng
+          dnf clean all
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Show shell versions
+        run: |
+          bash --version | head -1
+          zsh --version
+      - name: Test
+        env:
+          EXARARE_EL_TESTS: '1'
+        run: cargo test --locked
+      - name: Check that the exarare command name is free in the distro
+        run: |
+          if dnf -q provides '*/bin/exarare' 2>/dev/null | grep -q .; then
+            echo "::error::an RPM already provides a command named exarare"
+            exit 1
+          fi
+          echo "no RPM provides a command named exarare"

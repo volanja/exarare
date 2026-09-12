@@ -78,3 +78,22 @@ jobs:
             exit 1
           fi
           echo "no RPM provides a command named exarare"
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    permissions:
+      # Comment on the pull request, and read and write the stored reports.
+      pull-requests: write
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      - name: Collect coverage
+        run: cargo llvm-cov --locked --lcov --output-path lcov.info
+      - uses: k1LoW/octocov-action@v1

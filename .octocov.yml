@@ -1,0 +1,30 @@
+# Coverage reporting, see https://github.com/k1LoW/octocov
+coverage:
+  paths:
+    - lcov.info
+  # Line coverage is 82% at the time this was added. The bar is deliberately
+  # lower: it should catch a large drop, not block work on a few lines.
+  acceptable: 70%
+
+# Reported, but not enforced: no ratio has been agreed yet.
+codeToTestRatio:
+  code:
+    - src/**/*.rs
+  test:
+    - tests/**/*.rs
+
+comment:
+  if: is_pull_request
+
+summary:
+  if: true
+
+# Keep reports so that a pull request can be compared with the default branch.
+report:
+  if: is_default_branch
+  datastores:
+    - artifact://${GITHUB_REPOSITORY}
+
+diff:
+  datastores:
+    - artifact://${GITHUB_REPOSITORY}

@@ -1,2 +1,5 @@
 /target
 /.claude/settings.local.json
+# Coverage reports
+/lcov.info
+/coverage/

@@ -23,8 +23,12 @@ pub struct Meta {
     pub hostname: Option<String>,
     pub user: Option<String>,
     pub shell: String,
-    /// Directories snapshotted before and after the session.
-    #[serde(default = "default_watch_roots")]
+    /// Directories snapshotted before and after the session, so their content
+    /// is diffed.
+    #[serde(default = "default_snapshot_roots")]
+    pub snapshot_roots: Vec<PathBuf>,
+    /// Directories watched for touches only, with no content recorded.
+    #[serde(default)]
     pub watch_roots: Vec<PathBuf>,
     #[serde(with = "time::serde::rfc3339")]
     pub started_at: OffsetDateTime,
@@ -51,7 +55,7 @@ impl std::fmt::Display for Status {
     }
 }
 
-pub fn default_watch_roots() -> Vec<PathBuf> {
+pub fn default_snapshot_roots() -> Vec<PathBuf> {
     vec![PathBuf::from("/etc")]
 }
 
@@ -86,7 +90,12 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn create(name: Option<String>, shell: &Path, watch_roots: Vec<PathBuf>) -> Result<Self> {
+    pub fn create(
+        name: Option<String>,
+        shell: &Path,
+        snapshot_roots: Vec<PathBuf>,
+        watch_roots: Vec<PathBuf>,
+    ) -> Result<Self> {
         let now = OffsetDateTime::now_utc();
         let stamp = now.format(format_description!(
             "[year][month][day]-[hour][minute][second]"
@@ -103,6 +112,7 @@ impl Session {
                 .and_then(|h| h.into_string().ok()),
             user: std::env::var("USER").ok(),
             shell: shell.display().to_string(),
+            snapshot_roots,
             watch_roots,
             started_at: now,
             ended_at: None,
@@ -179,6 +189,11 @@ impl Session {
         self.dir.join("state").join(format!("{which}.json"))
     }
 
+    /// Path of the set of files the watcher saw being touched.
+    pub fn touched_path(&self) -> PathBuf {
+        self.dir.join("touched.json")
+    }
+
     pub fn append(&self, kind: EventKind) -> Result<()> {
         append_event(&self.dir, &Event::now(kind))
     }
@@ -251,7 +266,8 @@ mod tests {
                 hostname: None,
                 user: None,
                 shell: "/bin/bash".into(),
-                watch_roots: default_watch_roots(),
+                snapshot_roots: default_snapshot_roots(),
+                watch_roots: Vec::new(),
                 started_at: now,
                 ended_at: ended.then_some(now),
                 shell_pid,

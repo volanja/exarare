@@ -80,7 +80,7 @@ The prompt gets a `[rec]` prefix. Work as usual:
 
 | Command | Description |
 |---|---|
-| `exarare start [-n NAME] [--shell PATH] [--watch PATH]...` | Start a recording shell (bash or zsh; defaults to `$SHELL`) |
+| `exarare start [-n NAME] [--shell PATH] [--snapshot PATH]... [--watch PATH]... [--no-watcher]` | Start a recording shell (bash or zsh; defaults to `$SHELL`) |
 | `exarare stop` | Finish the current recording |
 | `exarare status` | Show whether the current shell is being recorded |
 | `exarare list` | List recorded sessions |
@@ -145,10 +145,34 @@ is why the list is the default.
 
 ### File changes
 
-`exarare start` snapshots the watched directories — `/etc` unless you pass
-`--watch` — and snapshots them again when the session ends. `exarare diff`
-then reports added, removed, modified and re-permissioned files, with a
-unified diff for text files:
+Two kinds of directory are involved, and they answer different questions.
+
+| Flag | Default | What it gives you |
+|---|---|---|
+| `--snapshot PATH` | `/etc` | content snapshotted before and after, so changes come with a diff |
+| `--watch PATH` | `/opt`, `/usr/local`, `/srv`, `/var/www`, `/root`, `/home`, when they exist | paths that were written to, with no content recorded |
+
+`--no-watcher` turns the second one off.
+
+Snapshots say what a file became. The watcher says a file was written to at
+all, which covers what snapshots cannot: a directory nobody thought to
+snapshot, and a file that was edited and then put back. Only paths are
+recorded there — never content — and a path is placed in the step whose
+commands were running when the write happened.
+
+These are never watched, because they say nothing about the work or would never
+stop reporting: `/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/var/tmp`,
+`/var/log`, `/var/cache`, `/var/lib/rpm`, `/var/lib/dnf`, `/var/lib/systemd`,
+`/var/lib/selinux`, `/var/spool`, container storage, shell history files,
+editor temporary files, `*.lock`, `__pycache__` and `.git`. Exarare's own data
+directory is excluded too, or it would watch itself writing the session.
+
+At most 10,000 paths are remembered, and a directory that cannot be watched —
+usually because the kernel's watch limit is reached — is recorded as a gap. The
+runbook says so rather than presenting a partial list as complete.
+
+`exarare diff` reports added, removed, modified and re-permissioned files from
+the snapshots, with a unified diff for text files, and then the touched paths:
 
 ```console
 $ exarare diff
@@ -253,6 +277,7 @@ readable only by its owner, because recordings can contain secrets.
 | `snapshots/before.jsonl`, `snapshots/after.jsonl` | One entry per file: hash, size, mode, owner |
 | `packages/before.json`, `packages/after.json` | Installed packages, explicit installs, repositories, module streams |
 | `state/before.json`, `state/after.json` | Enabled units, running services, firewall rules, users, groups |
+| `touched.json` | Paths the watcher saw being written to, with the time each was first seen |
 | `blobs/` | Content of the text files, addressed by hash |
 
 ### Limitations
@@ -265,8 +290,8 @@ readable only by its owner, because recordings can contain secrets.
 - Commands run in a shell started inside the recording shell (e.g. `sudo -i`)
   are not recorded. Start the recording as root instead.
 - Command output is not recorded yet.
-- File changes are found by comparing snapshots of the watched directories, so
-  a file edited outside them is not noticed. Pass `--watch` for other paths.
+- Content is only recorded for the `--snapshot` directories. Elsewhere the
+  watcher can say a file was touched, but not what changed inside it.
 - A non-ASCII step title or note needs a UTF-8 locale. bash 3.2, which macOS
   still ships, passes a mangled argument when `LC_ALL`, `LC_CTYPE` and `LANG`
   all say the encoding is single-byte. Exarare warns at `exarare start` when
@@ -338,6 +363,7 @@ covered by unit tests over captured output and need a VM for a real check.
 - [x] Probe for RPM / dnf
 - [x] Probes for systemd, firewalld, users and groups
 - [x] Ansible playbook generation
+- [x] Watch for touched files (inotify / FSEvents)
 - [ ] Optional auditd backend
 - [ ] CI on AlmaLinux / UBI 8, 9 and 10, static binaries and RPM packages
 

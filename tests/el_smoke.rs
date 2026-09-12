@@ -35,7 +35,7 @@ fn records_dnf_and_etc_edits() {
     let recording = record_with(
         &bash,
         &with_exarare_on_path(SCRIPT),
-        &[OsStr::new("--watch"), OsStr::new("/etc")],
+        &[OsStr::new("--snapshot"), OsStr::new("/etc")],
     );
     let lines = recording.command_lines();
 

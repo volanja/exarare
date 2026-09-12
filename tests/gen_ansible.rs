@@ -29,7 +29,7 @@ fn generates_a_playbook_and_its_files() {
     let recording = record_with(
         &bash,
         &with_exarare_on_path(&script),
-        &[OsStr::new("--watch"), root.as_os_str()],
+        &[OsStr::new("--snapshot"), root.as_os_str()],
     );
 
     let out = tempfile::tempdir().unwrap();
@@ -95,7 +95,7 @@ fn comments_follow_the_language_but_task_names_do_not() {
     let recording = record_with(
         &bash,
         &with_exarare_on_path(&script),
-        &[OsStr::new("--watch"), root.as_os_str()],
+        &[OsStr::new("--snapshot"), root.as_os_str()],
     );
 
     let out = tempfile::tempdir().unwrap();

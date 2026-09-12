@@ -261,6 +261,49 @@ impl Messages {
         msg!(self, "Packages", "パッケージ")
     }
 
+    // --- Touched files, from the watcher ---
+
+    pub fn touched_files(&self) -> &'static str {
+        msg!(self, "Files touched", "触られたファイル")
+    }
+
+    pub fn touched_intro(&self) -> &'static str {
+        msg!(
+            self,
+            "These paths were written to during the work, and their content was not recorded: they are either outside the snapshotted directories, or they ended up unchanged.",
+            "作業中に書き込みが発生したパスです。内容は記録していません。スナップショット対象の外にあるか、最終的に内容が変わらなかったものです。"
+        )
+    }
+
+    pub fn touched_truncated(&self, limit: usize) -> String {
+        msg!(
+            self,
+            format!("More than {limit} paths were touched, so this list is incomplete."),
+            format!("{limit} 件を超えるパスが触られたため、この一覧は網羅的ではありません。")
+        )
+    }
+
+    pub fn touched_incomplete(&self) -> &'static str {
+        msg!(
+            self,
+            "Some directories could not be watched, so touches under them were missed:",
+            "監視できなかったディレクトリがあり、その配下の書き込みは取りこぼしています。"
+        )
+    }
+
+    pub fn step_touched(&self) -> &'static str {
+        msg!(
+            self,
+            "Files touched in this step",
+            "このステップで触られたファイル"
+        )
+    }
+
+    /// Directories watched for touches only, with no content recorded.
+    pub fn watched_directories(&self) -> &'static str {
+        msg!(self, "Watched for touches", "監視のみの対象")
+    }
+
     pub fn packages_installed(&self) -> &'static str {
         msg!(self, "Installed", "追加")
     }
@@ -648,8 +691,13 @@ impl Messages {
         msg!(self, "(no exit recorded)", "（終了コードなし）")
     }
 
-    pub fn watched_directories(&self) -> &'static str {
-        msg!(self, "Watched directories", "監視対象ディレクトリ")
+    /// Directories whose content is snapshotted and diffed.
+    pub fn snapshot_directories(&self) -> &'static str {
+        msg!(
+            self,
+            "Snapshotted directories",
+            "スナップショット対象ディレクトリ"
+        )
     }
 
     pub fn generated_by(&self) -> &'static str {

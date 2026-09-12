@@ -4,8 +4,9 @@
 //! fill in. Nothing is invented: where the record cannot answer a question, the
 //! document says so and leaves a TODO.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use time::OffsetDateTime;
 use time::macros::format_description;
@@ -14,6 +15,7 @@ use crate::diff::{Change, unified_body};
 use crate::i18n::Messages;
 use crate::session::Meta;
 use crate::step::{CommandRun, Item, Runbook, Step};
+use crate::watcher::{MAX_PATHS, Touched};
 
 /// Diff lines shown inline per file; longer diffs move to an appendix.
 const MAX_INLINE_DIFF_LINES: usize = 50;
@@ -24,8 +26,29 @@ pub struct Input<'a> {
     /// Blob store of the session, for reading recorded file content.
     pub blobs: &'a Path,
     pub version: &'a str,
+    /// Paths the watcher saw being written to.
+    pub touched: Touched,
     /// Draw the overview as a Mermaid flowchart instead of a numbered list.
     pub mermaid: bool,
+}
+
+/// Touched paths worth reporting: the ones whose content the file diff does not
+/// already show.
+fn unreported_touches<'a>(input: &'a Input<'a>) -> Vec<&'a PathBuf> {
+    let diffed: BTreeSet<&Path> = input
+        .runbook
+        .steps
+        .iter()
+        .flat_map(|step| step.files.iter())
+        .chain(input.runbook.other_files.iter())
+        .map(|change| change.path())
+        .collect();
+    input
+        .touched
+        .paths
+        .keys()
+        .filter(|path| !diffed.contains(path.as_path()))
+        .collect()
 }
 
 pub fn render(input: &Input, msg: &Messages) -> String {
@@ -188,9 +211,17 @@ fn prerequisites(out: &mut String, input: &Input, msg: &Messages) {
     let _ = writeln!(
         out,
         "| {} | {} |",
-        msg.watched_directories(),
-        paths(&meta.watch_roots)
+        msg.snapshot_directories(),
+        paths(&meta.snapshot_roots)
     );
+    if !meta.watch_roots.is_empty() {
+        let _ = writeln!(
+            out,
+            "| {} | {} |",
+            msg.watched_directories(),
+            paths(&meta.watch_roots)
+        );
+    }
     out.push('\n');
     todo(out, msg, msg.prereq_todo());
 }
@@ -284,6 +315,10 @@ fn procedure<'a>(
     long_diffs: &mut Vec<(&'a Change, String)>,
 ) {
     let runbook = input.runbook;
+    let unreported_set: BTreeSet<&Path> = unreported_touches(input)
+        .into_iter()
+        .map(|path| path.as_path())
+        .collect();
     let _ = writeln!(out, "## 4. {}\n", msg.procedure());
     let _ = writeln!(out, "{}\n", msg.procedure_intro());
     for (i, step) in runbook.steps.iter().enumerate() {
@@ -320,6 +355,23 @@ fn procedure<'a>(
             }
             out.push('\n');
         }
+        // The watcher knows when a write happened, not which command caused it,
+        // so a touch belongs to the step whose commands ran at that time.
+        if let Some((from, to)) = step.time_range() {
+            let in_step: Vec<&PathBuf> = input
+                .touched
+                .between(from, to)
+                .into_iter()
+                .filter(|path| unreported_set.contains(path.as_path()))
+                .collect();
+            if !in_step.is_empty() {
+                let _ = writeln!(out, "#### {}\n", msg.step_touched());
+                for path in in_step {
+                    let _ = writeln!(out, "- `{}`", path.display());
+                }
+                out.push('\n');
+            }
+        }
         if step.files.is_empty() {
             continue;
         }
@@ -341,6 +393,7 @@ fn what_changed<'a>(
     let _ = writeln!(out, "## 5. {}\n", msg.what_changed());
     packages_section(out, runbook, msg);
     state_section(out, runbook, msg);
+    touched_section(out, input, msg);
 
     let total =
         runbook.steps.iter().map(|s| s.files.len()).sum::<usize>() + runbook.other_files.len();
@@ -547,6 +600,35 @@ fn state_section(out: &mut String, runbook: &Runbook, msg: &Messages) {
     }
 }
 
+/// Paths the watcher saw, which the diff does not already cover. Nothing is
+/// claimed about their content: only that something wrote to them.
+fn touched_section(out: &mut String, input: &Input, msg: &Messages) {
+    let touched = &input.touched;
+    let paths = unreported_touches(input);
+    if paths.is_empty() && touched.incomplete_roots.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "### {}\n", msg.touched_files());
+    if !touched.incomplete_roots.is_empty() {
+        let _ = writeln!(out, "> {}\n", msg.touched_incomplete());
+        for gap in &touched.incomplete_roots {
+            let _ = writeln!(out, "> - {gap}");
+        }
+        out.push('\n');
+    }
+    if paths.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "{}\n", msg.touched_intro());
+    for path in paths {
+        let _ = writeln!(out, "- `{}`", path.display());
+    }
+    out.push('\n');
+    if touched.truncated {
+        let _ = writeln!(out, "{}\n", msg.touched_truncated(MAX_PATHS));
+    }
+}
+
 fn verification(out: &mut String, runbook: &Runbook, msg: &Messages) {
     let _ = writeln!(out, "## 6. {}\n", msg.verification());
     if runbook.verifications.is_empty() {
@@ -655,9 +737,17 @@ fn appendix_generated(out: &mut String, input: &Input, msg: &Messages) {
     let _ = writeln!(
         out,
         "| {} | {} |",
-        msg.watched_directories(),
-        paths(&input.meta.watch_roots)
+        msg.snapshot_directories(),
+        paths(&input.meta.snapshot_roots)
     );
+    if !input.meta.watch_roots.is_empty() {
+        let _ = writeln!(
+            out,
+            "| {} | {} |",
+            msg.watched_directories(),
+            paths(&input.meta.watch_roots)
+        );
+    }
     out.push('\n');
     let _ = writeln!(out, "{}", msg.generated_note());
 }
@@ -667,7 +757,7 @@ mod tests {
     use super::*;
     use crate::event::{Event, EventKind};
     use crate::i18n::Locale;
-    use crate::session::default_watch_roots;
+    use crate::session::default_snapshot_roots;
     use crate::step;
 
     fn meta() -> Meta {
@@ -677,7 +767,8 @@ mod tests {
             hostname: Some("web01".into()),
             user: Some("root".into()),
             shell: "/bin/bash".into(),
-            watch_roots: default_watch_roots(),
+            snapshot_roots: default_snapshot_roots(),
+            watch_roots: Vec::new(),
             started_at: OffsetDateTime::UNIX_EPOCH,
             ended_at: Some(OffsetDateTime::UNIX_EPOCH),
             shell_pid: Some(1234),
@@ -724,6 +815,7 @@ mod tests {
             runbook: &runbook,
             blobs: Path::new("/nonexistent"),
             version: "0.1.0",
+            touched: Touched::default(),
             mermaid: false,
         };
         render(&input, &locale.messages())
@@ -835,6 +927,7 @@ mod tests {
                 runbook: &runbook,
                 blobs: Path::new("/nonexistent"),
                 version: "0.1.0",
+                touched: Touched::default(),
                 mermaid: false,
             },
             &Locale::En.messages(),
@@ -897,6 +990,7 @@ mod tests {
                 runbook: &runbook,
                 blobs: Path::new("/nonexistent"),
                 version: "0.1.0",
+                touched: Touched::default(),
                 mermaid: false,
             },
             &Locale::En.messages(),
@@ -943,6 +1037,7 @@ mod tests {
                 runbook: &runbook,
                 blobs: Path::new("/nonexistent"),
                 version: "0.1.0",
+                touched: Touched::default(),
                 mermaid: false,
             },
             &Locale::En.messages(),
@@ -1034,6 +1129,7 @@ mod tests {
                 runbook: &runbook,
                 blobs: Path::new("/nonexistent"),
                 version: "0.1.0",
+                touched: Touched::default(),
                 mermaid: true,
             },
             &Locale::En.messages(),

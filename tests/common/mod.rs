@@ -91,9 +91,15 @@ pub fn record_with(shell: &Path, script: &str, extra: &[&OsStr]) -> Recording {
     let mut cmd = Command::new(exarare_bin());
     cmd.args(["start", "--name", "test", "--shell"]).arg(shell);
     if extra.is_empty() {
-        cmd.arg("--watch").arg(&quiet_root);
+        cmd.arg("--snapshot").arg(&quiet_root);
     } else {
         cmd.args(extra);
+    }
+    // The default watch roots include /usr/local and /opt, which would make
+    // every test watch trees it has nothing to do with. A test that wants the
+    // watcher passes --watch itself.
+    if !extra.iter().any(|arg| *arg == OsStr::new("--watch")) {
+        cmd.arg("--no-watcher");
     }
     let mut child = cmd
         .env("HOME", &home)

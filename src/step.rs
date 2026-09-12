@@ -57,6 +57,14 @@ impl Step {
     pub fn command_count(&self) -> usize {
         self.commands().count()
     }
+
+    /// When the step's commands ran, which is how a touched file is placed in
+    /// it: the watcher knows the time of a write, not which command caused it.
+    pub fn time_range(&self) -> Option<(OffsetDateTime, OffsetDateTime)> {
+        let mut times = self.commands().map(|run| run.ts);
+        let first = times.next()?;
+        Some(times.fold((first, first), |(min, max), ts| (min.min(ts), max.max(ts))))
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -21,3 +21,14 @@ walkdir = "2.5.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# The RPM carries a statically linked binary, so it has no library
+# dependencies to discover and the same package installs on EL 8, 9 and 10.
+[package.metadata.generate-rpm]
+auto-req = "disabled"
+assets = [
+    { source = "target/release/exarare", dest = "/usr/bin/exarare", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/exarare/README.md", mode = "644", doc = true },
+    { source = "LICENSE-MIT", dest = "/usr/share/licenses/exarare/LICENSE-MIT", mode = "644" },
+    { source = "LICENSE-APACHE", dest = "/usr/share/licenses/exarare/LICENSE-APACHE", mode = "644" },
+]

@@ -95,6 +95,9 @@ enum GenTarget {
         /// Language of the generated text: en or ja. Defaults to EXARARE_LANG, then en.
         #[arg(long)]
         lang: Option<String>,
+        /// Draw the overview as a Mermaid flowchart instead of a numbered list
+        #[arg(long)]
+        mermaid: bool,
     },
     /// An Ansible playbook, written into a directory with its files
     Ansible {
@@ -136,7 +139,8 @@ fn main() -> ExitCode {
                 session,
                 output,
                 lang,
-            } => gen_md(session, output, lang),
+                mermaid,
+            } => gen_md(session, output, lang, mermaid),
             GenTarget::Ansible {
                 session,
                 output,
@@ -385,7 +389,12 @@ fn show_diff(id: Option<String>) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn gen_md(id: Option<String>, output: Option<PathBuf>, lang: Option<String>) -> Result<ExitCode> {
+fn gen_md(
+    id: Option<String>,
+    output: Option<PathBuf>,
+    lang: Option<String>,
+    mermaid: bool,
+) -> Result<ExitCode> {
     let session = resolve_session(id)?;
     require_finished_snapshots(&session)?;
     let locale = Locale::resolve(lang.as_deref())?;
@@ -400,6 +409,7 @@ fn gen_md(id: Option<String>, output: Option<PathBuf>, lang: Option<String>) -> 
             runbook: &runbook,
             blobs: &blobs,
             version: env!("CARGO_PKG_VERSION"),
+            mermaid,
         },
         &locale.messages(),
     );

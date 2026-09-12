@@ -85,7 +85,7 @@ The prompt gets a `[rec]` prefix. Work as usual:
 | `exarare status` | Show whether the current shell is being recorded |
 | `exarare list` | List recorded sessions |
 | `exarare diff [ID]` | Show the file changes of a session (default: the most recent) |
-| `exarare gen md [ID] [-o FILE] [--lang en\|ja]` | Write a Markdown runbook for a session |
+| `exarare gen md [ID] [-o FILE] [--lang en\|ja] [--mermaid]` | Write a Markdown runbook for a session |
 | `exarare gen ansible [ID] [-o DIR] [--lang en\|ja]` | Write an Ansible playbook for a session |
 | `exarare step TEXT` | Start a step of the runbook |
 | `exarare note TEXT` | Add a remark to the step being worked on |
@@ -127,6 +127,21 @@ Two commands shape the document while you work:
 The fixed text is available in English (default) and Japanese, selected with
 `--lang` or the `EXARARE_LANG` environment variable. Recorded commands, paths
 and diffs are never translated.
+
+`--mermaid` draws chapter 2 as a flowchart instead of a numbered list, one node
+per step:
+
+````markdown
+```mermaid
+flowchart TD
+    step1["1. Install nginx<br/>2 commands, 1 package, 0 changed files"]
+    step2["2. Open the firewall<br/>1 command, 0 packages, 0 changed files"]
+    step1 --> step2
+```
+````
+
+GitHub renders it; a reader looking at the raw Markdown sees the source, which
+is why the list is the default.
 
 ### File changes
 

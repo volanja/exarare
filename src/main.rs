@@ -176,6 +176,15 @@ fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> R
         watch
     };
 
+    if !sys::locale_is_utf8() {
+        // Old shells mangle a multibyte argument when the locale says the
+        // encoding is single-byte: bash 3.2 recorded a step title as an
+        // unrelated string. The locale is deliberately not changed here, since
+        // that would also change the behaviour of the commands being recorded.
+        eprintln!(
+            "exarare: warning: the locale is not UTF-8, so a non-ASCII step title or note may be recorded incorrectly by an older shell. Set LC_ALL to a UTF-8 locale before starting."
+        );
+    }
     let mut session = Session::create(name, &shell, watch_roots)?;
     session.append(EventKind::SessionStart)?;
     take_snapshot(&session, "before")?;

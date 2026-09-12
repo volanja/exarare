@@ -140,17 +140,22 @@ impl Messages {
         msg!(self, "The whole session", "セッション全体")
     }
 
-    /// Title of the work that came before the operator's first heading.
-    pub fn before_first_heading(&self) -> &'static str {
-        msg!(self, "Before the first heading", "最初の見出しより前の作業")
+    /// Title of the work that came before the operator's first step.
+    pub fn before_first_step(&self) -> &'static str {
+        msg!(self, "Before the first step", "最初のステップより前の作業")
     }
 
-    pub fn no_notes_hint(&self) -> &'static str {
+    pub fn no_steps_hint(&self) -> &'static str {
         msg!(
             self,
-            "No headings were recorded, so the session is a single step. Run `exarare note \"...\"` while working to split it up.",
-            "見出しが記録されていないため、セッション全体が1ステップになっています。作業中に `exarare note \"...\"` を実行すると分割できます。"
+            "No steps were recorded, so the session is a single step. Run `exarare step \"...\"` while working to split it up.",
+            "ステップが記録されていないため、セッション全体が1ステップになっています。作業中に `exarare step \"...\"` を実行すると分割できます。"
         )
+    }
+
+    /// Label of a remark recorded with `exarare note`.
+    pub fn note_label(&self) -> &'static str {
+        msg!(self, "Note", "補足")
     }
 
     /// Separator between items written inline, which differs by script.

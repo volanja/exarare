@@ -22,15 +22,35 @@ impl CommandRun {
     }
 }
 
-/// A section of the runbook: the commands under one `exarare note` heading.
+/// The body of a step, in the order it was recorded, so that a remark stays
+/// next to the command it is about.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Item {
+    Command(CommandRun),
+    Note(String),
+}
+
+/// A section of the runbook: what happened under one `exarare step` heading.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Step {
-    /// `None` for work done before the first note, or when no note was recorded.
-    pub heading: Option<String>,
-    /// Commands worth showing as instructions.
-    pub commands: Vec<CommandRun>,
+    /// `None` for work done before the first step, or when none was recorded.
+    pub title: Option<String>,
+    pub items: Vec<Item>,
     /// File changes a command of this step names by path.
     pub files: Vec<Change>,
+}
+
+impl Step {
+    pub fn commands(&self) -> impl Iterator<Item = &CommandRun> {
+        self.items.iter().filter_map(|item| match item {
+            Item::Command(run) => Some(run),
+            Item::Note(_) => None,
+        })
+    }
+
+    pub fn command_count(&self) -> usize {
+        self.commands().count()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -42,8 +62,8 @@ pub struct Runbook {
     pub other_files: Vec<Change>,
     /// Successful commands that look like checks.
     pub verifications: Vec<CommandRun>,
-    /// True when the operator never ran `exarare note`.
-    pub without_headings: bool,
+    /// True when the operator never ran `exarare step`.
+    pub without_steps: bool,
 }
 
 /// Commands that inspect rather than change, so they are not instructions.
@@ -106,6 +126,11 @@ fn is_verification(cmd: &str) -> bool {
         || trimmed.ends_with("-V")
 }
 
+/// Whether a command line qualifies as an instruction of the procedure.
+fn is_instruction(run: &CommandRun) -> bool {
+    run.succeeded() && !is_noise(&run.cmd) && !is_verification(&run.cmd)
+}
+
 /// Paths named in the command line, matched against the changed files.
 fn mentions(cmd: &str, path: &Path) -> bool {
     if cmd.contains(path.to_string_lossy().as_ref()) {
@@ -128,38 +153,43 @@ fn mentions(cmd: &str, path: &Path) -> bool {
     })
 }
 
+/// A recorded item before the exit codes are known: commands are held as
+/// indices into the log, which is filled in as `CmdEnd` events arrive.
+enum Recorded {
+    Command(usize),
+    Note(String),
+}
+
 /// Builds the runbook model. `changes` is session-wide, because snapshots are
 /// taken once before and once after.
 pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
     let mut log: Vec<CommandRun> = Vec::new();
-    let mut headings: Vec<(Option<String>, Vec<CommandRun>)> = vec![(None, Vec::new())];
+    let mut groups: Vec<(Option<String>, Vec<Recorded>)> = vec![(None, Vec::new())];
 
     for event in events {
+        let group = groups.last_mut().expect("one group always exists");
         match &event.kind {
             EventKind::CmdStart { cmd, cwd } => {
-                let run = CommandRun {
+                log.push(CommandRun {
                     ts: event.ts,
                     cmd: cmd.clone(),
                     cwd: cwd.clone(),
                     exit_code: None,
-                };
-                log.push(run.clone());
-                headings.last_mut().expect("one heading exists").1.push(run);
+                });
+                group.1.push(Recorded::Command(log.len() - 1));
             }
             EventKind::CmdEnd { exit_code } => {
                 if let Some(run) = log.last_mut() {
                     run.exit_code = Some(*exit_code);
                 }
-                if let Some(run) = headings.last_mut().and_then(|(_, runs)| runs.last_mut()) {
-                    run.exit_code = Some(*exit_code);
-                }
             }
-            EventKind::Note { text } => headings.push((Some(text.clone()), Vec::new())),
+            EventKind::Note { text } => group.1.push(Recorded::Note(text.clone())),
+            EventKind::Step { title } => groups.push((Some(title.clone()), Vec::new())),
             EventKind::SessionStart | EventKind::SessionEnd => {}
         }
     }
 
-    let without_headings = headings.iter().all(|(heading, _)| heading.is_none());
+    let without_steps = groups.iter().all(|(title, _)| title.is_none());
 
     let verifications: Vec<CommandRun> = log
         .iter()
@@ -168,25 +198,38 @@ pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
         .collect();
 
     // Instructions leave out failures, inspection and checks. Checks are shown
-    // in their own chapter, so they would otherwise appear twice.
-    let mut steps: Vec<(Step, Vec<CommandRun>)> = headings
-        .into_iter()
-        .map(|(heading, runs)| {
-            let commands = runs
+    // in their own chapter, so they would otherwise appear twice. Notes keep
+    // their place among the commands they were written about.
+    let mut steps: Vec<(Step, Vec<&CommandRun>)> = groups
+        .iter()
+        .map(|(title, recorded)| {
+            let items = recorded
                 .iter()
-                .filter(|run| run.succeeded() && !is_noise(&run.cmd) && !is_verification(&run.cmd))
-                .cloned()
+                .filter_map(|item| match item {
+                    Recorded::Command(i) => {
+                        let run = &log[*i];
+                        is_instruction(run).then(|| Item::Command(run.clone()))
+                    }
+                    Recorded::Note(text) => Some(Item::Note(text.clone())),
+                })
+                .collect();
+            let all_commands = recorded
+                .iter()
+                .filter_map(|item| match item {
+                    Recorded::Command(i) => Some(&log[*i]),
+                    Recorded::Note(_) => None,
+                })
                 .collect();
             (
                 Step {
-                    heading,
-                    commands,
+                    title: title.clone(),
+                    items,
                     files: Vec::new(),
                 },
-                runs,
+                all_commands,
             )
         })
-        .filter(|(step, _)| !step.commands.is_empty() || step.heading.is_some())
+        .filter(|(step, _)| !step.items.is_empty() || step.title.is_some())
         .collect();
 
     // Attribution looks at every command of the step, not just the
@@ -209,7 +252,7 @@ pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
         log,
         other_files,
         verifications,
-        without_headings,
+        without_steps,
     }
 }
 
@@ -237,6 +280,16 @@ mod tests {
         event(EventKind::CmdEnd { exit_code })
     }
 
+    fn step(title: &str) -> Event {
+        event(EventKind::Step {
+            title: title.into(),
+        })
+    }
+
+    fn note(text: &str) -> Event {
+        event(EventKind::Note { text: text.into() })
+    }
+
     fn entry(path: &str) -> Entry {
         Entry {
             path: PathBuf::from(path),
@@ -252,13 +305,15 @@ mod tests {
         }
     }
 
+    fn command_lines(step: &Step) -> Vec<&str> {
+        step.commands().map(|run| run.cmd.as_str()).collect()
+    }
+
     #[test]
-    fn splits_on_notes_and_drops_failures_and_noise() {
+    fn splits_on_steps_and_drops_failures_and_noise() {
         let events = vec![
             event(EventKind::SessionStart),
-            event(EventKind::Note {
-                text: "Install nginx".into(),
-            }),
+            step("Install nginx"),
             cmd("dnf install -y nginx"),
             done(0),
             cmd("ls /etc/nginx"),
@@ -267,25 +322,18 @@ mod tests {
             done(1),
             cmd("systemctl start nginx"),
             done(0),
-            event(EventKind::Note {
-                text: "Open the firewall".into(),
-            }),
+            step("Open the firewall"),
             cmd("firewall-cmd --add-service=http --permanent"),
             done(0),
             cmd("exit"),
         ];
 
         let runbook = build(&events, &[]);
-        assert!(!runbook.without_headings);
+        assert!(!runbook.without_steps);
         let steps: Vec<(&str, Vec<&str>)> = runbook
             .steps
             .iter()
-            .map(|s| {
-                (
-                    s.heading.as_deref().unwrap_or(""),
-                    s.commands.iter().map(|c| c.cmd.as_str()).collect(),
-                )
-            })
+            .map(|s| (s.title.as_deref().unwrap_or(""), command_lines(s)))
             .collect();
         assert_eq!(
             steps,
@@ -306,25 +354,42 @@ mod tests {
     }
 
     #[test]
-    fn a_session_without_notes_is_one_step() {
+    fn a_note_stays_between_the_commands_it_was_written_about() {
+        let events = vec![
+            step("Install nginx"),
+            cmd("dnf install -y nginx"),
+            done(0),
+            note("needs EPEL enabled"),
+            cmd("systemctl enable --now nginx"),
+            done(0),
+        ];
+
+        let runbook = build(&events, &[]);
+        let items = &runbook.steps[0].items;
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[0], Item::Command(run) if run.cmd == "dnf install -y nginx"));
+        assert_eq!(items[1], Item::Note("needs EPEL enabled".into()));
+        assert!(matches!(&items[2], Item::Command(run) if run.cmd.starts_with("systemctl enable")));
+        // A note is not a step boundary.
+        assert_eq!(runbook.steps.len(), 1);
+    }
+
+    #[test]
+    fn a_session_without_steps_is_one_step() {
         let events = vec![cmd("dnf install -y zsh"), done(0)];
         let runbook = build(&events, &[]);
-        assert!(runbook.without_headings);
+        assert!(runbook.without_steps);
         assert_eq!(runbook.steps.len(), 1);
-        assert_eq!(runbook.steps[0].heading, None);
+        assert_eq!(runbook.steps[0].title, None);
     }
 
     #[test]
     fn attributes_files_to_the_step_that_names_them() {
         let events = vec![
-            event(EventKind::Note {
-                text: "Configure nginx".into(),
-            }),
+            step("Configure nginx"),
             cmd("vi /etc/nginx/nginx.conf"),
             done(0),
-            event(EventKind::Note {
-                text: "Tune the kernel".into(),
-            }),
+            step("Tune the kernel"),
             cmd("sysctl -p"),
             done(0),
         ];
@@ -352,9 +417,7 @@ mod tests {
         // The snapshot path is canonical, the command is not: on macOS a
         // temporary directory is recorded under /private/var but typed as /var.
         let events = vec![
-            event(EventKind::Note {
-                text: "Write the config".into(),
-            }),
+            step("Write the config"),
             cmd("printf 'listen 443\\n' > /var/folders/x/T/tmp1/etc/app.conf"),
             done(0),
         ];

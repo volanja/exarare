@@ -54,9 +54,10 @@ sudo exarare start --name "web01 nginx setup"
 The prompt gets a `[rec]` prefix. Work as usual:
 
 ```sh
-[rec] # exarare note "Install nginx"
+[rec] # exarare step "Install nginx"
 [rec] # dnf install -y nginx
 [rec] # vi /etc/nginx/nginx.conf
+[rec] # exarare note "listen changed to 8080"
 [rec] # systemctl enable --now nginx
 [rec] # exit
 ```
@@ -73,7 +74,8 @@ The prompt gets a `[rec]` prefix. Work as usual:
 | `exarare list` | List recorded sessions |
 | `exarare diff [ID]` | Show the file changes of a session (default: the most recent) |
 | `exarare gen md [ID] [-o FILE] [--lang en\|ja]` | Write a Markdown runbook for a session |
-| `exarare note TEXT` | Insert a heading into the runbook |
+| `exarare step TEXT` | Start a step of the runbook |
+| `exarare note TEXT` | Add a remark to the step being worked on |
 
 ### The runbook
 
@@ -98,8 +100,16 @@ template only a human can fill in — Exarare does not guess at intent:
 
 Chapter 4 shows only the commands that worked, so trial and error does not
 become an instruction; nothing is lost, because appendix A keeps everything.
-Each `exarare note` starts a new step, and a session without notes is a single
-step. A file is placed in the step whose commands name its path.
+A file is placed in the step whose commands name its path.
+
+Two commands shape the document while you work:
+
+- `exarare step "Install nginx"` starts a step. It becomes an entry in the
+  overview and a section of the procedure. A session without steps is a single
+  step.
+- `exarare note "fails unless EPEL is enabled"` records a remark about the step
+  in progress. It appears where it was recorded, between the commands, so a
+  warning stays next to what it is about.
 
 The fixed text is available in English (default) and Japanese, selected with
 `--lang` or the `EXARARE_LANG` environment variable. Recorded commands, paths

@@ -61,7 +61,12 @@ enum Cmd {
         #[command(subcommand)]
         target: GenTarget,
     },
-    /// Insert a heading into the runbook, e.g. `exarare note "Install nginx"`
+    /// Start a step of the runbook, e.g. `exarare step "Install nginx"`
+    Step {
+        #[arg(required = true)]
+        title: Vec<String>,
+    },
+    /// Add a remark to the step being worked on, e.g. `exarare note "needs EPEL"`
     Note {
         #[arg(required = true)]
         text: Vec<String>,
@@ -118,7 +123,12 @@ fn main() -> ExitCode {
                 lang,
             } => gen_md(session, output, lang),
         },
-        Cmd::Note { text } => note(text.join(" ")),
+        Cmd::Step { title } => mark(EventKind::Step {
+            title: title.join(" "),
+        }),
+        Cmd::Note { text } => mark(EventKind::Note {
+            text: text.join(" "),
+        }),
         Cmd::Hook { hook } => {
             // Never disturb the user's shell: a lost event is better than an error on every prompt.
             let _ = run_hook(hook);
@@ -331,12 +341,13 @@ fn gen_md(id: Option<String>, output: Option<PathBuf>, lang: Option<String>) -> 
     Ok(ExitCode::SUCCESS)
 }
 
-fn note(text: String) -> Result<ExitCode> {
+/// Records a step heading or a remark against the session of this shell.
+fn mark(kind: EventKind) -> Result<ExitCode> {
     let session = Session::current()?.context("not recording")?;
     if session.status() != Status::Recording {
         bail!("session {} is not recording", session.meta.id);
     }
-    session.append(EventKind::Note { text })?;
+    session.append(kind)?;
     Ok(ExitCode::SUCCESS)
 }
 

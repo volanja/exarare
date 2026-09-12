@@ -13,7 +13,7 @@ use time::macros::format_description;
 use crate::diff::{Change, unified_body};
 use crate::i18n::Messages;
 use crate::session::Meta;
-use crate::step::{CommandRun, Runbook, Step};
+use crate::step::{CommandRun, Item, Runbook, Step};
 
 /// Diff lines shown inline per file; longer diffs move to an appendix.
 const MAX_INLINE_DIFF_LINES: usize = 50;
@@ -44,14 +44,14 @@ pub fn render(input: &Input, msg: &Messages) -> String {
     out
 }
 
-/// A step with no heading of its own is either the whole session, or the work
-/// that came before the first `exarare note`.
-fn heading_of(step: &Step, without_headings: bool, msg: &Messages) -> String {
-    step.heading.clone().unwrap_or_else(|| {
-        if without_headings {
+/// A step with no title of its own is either the whole session, or the work
+/// that came before the first `exarare step`.
+fn title_of(step: &Step, without_steps: bool, msg: &Messages) -> String {
+    step.title.clone().unwrap_or_else(|| {
+        if without_steps {
             msg.unnamed_step().to_string()
         } else {
-            msg.before_first_heading().to_string()
+            msg.before_first_step().to_string()
         }
     })
 }
@@ -117,15 +117,15 @@ fn overview(out: &mut String, runbook: &Runbook, msg: &Messages) {
             out,
             "{}. **{}** — {}{}{}",
             i + 1,
-            heading_of(step, runbook.without_headings, msg),
-            msg.count_commands(step.commands.len()),
+            title_of(step, runbook.without_steps, msg),
+            msg.count_commands(step.command_count()),
             msg.list_separator(),
             msg.count_files(step.files.len())
         );
     }
     out.push('\n');
-    if runbook.without_headings {
-        let _ = writeln!(out, "{}\n", msg.no_notes_hint());
+    if runbook.without_steps {
+        let _ = writeln!(out, "{}\n", msg.no_steps_hint());
     }
 }
 
@@ -150,31 +150,53 @@ fn prerequisites(out: &mut String, input: &Input, msg: &Messages) {
         out,
         "| {} | {} |",
         msg.watched_directories(),
-        meta.watch_roots
-            .iter()
-            .map(|p| format!("`{}`", p.display()))
-            .collect::<Vec<_>>()
-            .join(", ")
+        paths(&meta.watch_roots)
     );
     out.push('\n');
     todo(out, msg, msg.prereq_todo());
 }
 
-fn commands_block(out: &mut String, commands: &[CommandRun]) {
-    if commands.is_empty() {
+fn paths(paths: &[std::path::PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| format!("`{}`", p.display()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Writes the commands collected so far as one console block.
+fn flush_commands(out: &mut String, pending: &mut Vec<&CommandRun>) {
+    if pending.is_empty() {
         return;
     }
     let _ = writeln!(out, "```console");
-    for run in commands {
+    for run in pending.iter() {
         let _ = writeln!(out, "$ {}", run.cmd);
     }
     let _ = writeln!(out, "```\n");
+    pending.clear();
+}
+
+/// Commands and notes in the order they were recorded: a remark splits the
+/// console block, so that it stays next to the command it is about.
+fn step_body(out: &mut String, step: &Step, msg: &Messages) {
+    let mut pending: Vec<&CommandRun> = Vec::new();
+    for item in &step.items {
+        match item {
+            Item::Command(run) => pending.push(run),
+            Item::Note(text) => {
+                flush_commands(out, &mut pending);
+                let _ = writeln!(out, "> **{}**: {text}\n", msg.note_label());
+            }
+        }
+    }
+    flush_commands(out, &mut pending);
 }
 
 /// The directories the commands of a step ran in, in order of appearance.
-fn directories(commands: &[CommandRun]) -> Vec<&str> {
+fn directories(step: &Step) -> Vec<&str> {
     let mut seen: Vec<&str> = Vec::new();
-    for run in commands {
+    for run in step.commands() {
         if !seen.contains(&run.cwd.as_str()) {
             seen.push(&run.cwd);
         }
@@ -222,17 +244,18 @@ fn procedure<'a>(
     msg: &Messages,
     long_diffs: &mut Vec<(&'a Change, String)>,
 ) {
+    let runbook = input.runbook;
     let _ = writeln!(out, "## 4. {}\n", msg.procedure());
     let _ = writeln!(out, "{}\n", msg.procedure_intro());
-    for (i, step) in input.runbook.steps.iter().enumerate() {
+    for (i, step) in runbook.steps.iter().enumerate() {
         let _ = writeln!(
             out,
             "### 4.{}. {}\n",
             i + 1,
-            heading_of(step, input.runbook.without_headings, msg)
+            title_of(step, runbook.without_steps, msg)
         );
-        commands_block(out, &step.commands);
-        let dirs = directories(&step.commands);
+        step_body(out, step, msg);
+        let dirs = directories(step);
         if !dirs.is_empty() {
             let _ = writeln!(
                 out,
@@ -381,13 +404,7 @@ fn appendix_generated(out: &mut String, input: &Input, msg: &Messages) {
         out,
         "| {} | {} |",
         msg.watched_directories(),
-        input
-            .meta
-            .watch_roots
-            .iter()
-            .map(|p| format!("`{}`", p.display()))
-            .collect::<Vec<_>>()
-            .join(", ")
+        paths(&input.meta.watch_roots)
     );
     out.push('\n');
     let _ = writeln!(out, "{}", msg.generated_note());
@@ -422,11 +439,19 @@ mod tests {
         };
         vec![
             at(EventKind::SessionStart),
-            at(EventKind::Note {
-                text: "Install nginx".into(),
+            at(EventKind::Step {
+                title: "Install nginx".into(),
             }),
             at(EventKind::CmdStart {
                 cmd: "dnf install -y nginx".into(),
+                cwd: "/root".into(),
+            }),
+            at(EventKind::CmdEnd { exit_code: 0 }),
+            at(EventKind::Note {
+                text: "needs EPEL enabled".into(),
+            }),
+            at(EventKind::CmdStart {
+                cmd: "systemctl enable --now nginx".into(),
                 cwd: "/root".into(),
             }),
             at(EventKind::CmdEnd { exit_code: 0 }),
@@ -474,6 +499,7 @@ mod tests {
             ]
         );
         assert!(doc.starts_with("# Build runbook: web01 nginx setup"));
+        assert!(doc.contains("### 4.1. Install nginx"));
     }
 
     #[test]
@@ -483,6 +509,22 @@ mod tests {
         assert!(doc.contains("### Why it was needed"));
         assert!(doc.contains("### Definition of done"));
         assert!(doc.contains("> **TODO**"));
+    }
+
+    #[test]
+    fn a_note_is_rendered_between_the_commands() {
+        let doc = rendered(Locale::En);
+        let step = doc.split("### 4.1. Install nginx").nth(1).unwrap();
+        let step = step.split("## 5.").next().unwrap();
+        let note_at = step.find("> **Note**: needs EPEL enabled").unwrap();
+        let before = step.find("dnf install -y nginx").unwrap();
+        let after = step.find("systemctl enable --now nginx").unwrap();
+        assert!(
+            before < note_at && note_at < after,
+            "the note should sit between the two commands: {step}"
+        );
+        // The console block is split, rather than the note being moved away.
+        assert_eq!(step.matches("```console").count(), 2, "{step}");
     }
 
     #[test]
@@ -514,6 +556,7 @@ mod tests {
         assert!(doc.contains("## 1. 目的"));
         assert!(doc.contains("## 7. 切り戻し"));
         assert!(doc.contains("> **要記入**"));
+        assert!(doc.contains("> **補足**: needs EPEL enabled"));
         // Recorded data stays as it was recorded.
         assert!(doc.contains("dnf install -y nginx"));
     }

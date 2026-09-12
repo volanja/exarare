@@ -144,7 +144,7 @@ fn is_instruction(run: &CommandRun) -> bool {
 }
 
 /// Paths named in the command line, matched against the changed files.
-fn mentions(cmd: &str, path: &Path) -> bool {
+pub fn mentions_path(cmd: &str, path: &Path) -> bool {
     if cmd.contains(path.to_string_lossy().as_ref()) {
         return true;
     }
@@ -251,9 +251,10 @@ pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
     // is the line that names the file that changed.
     let mut other_files = Vec::new();
     for change in changes {
-        let owner = steps
-            .iter_mut()
-            .find(|(_, runs)| runs.iter().any(|run| mentions(&run.cmd, change.path())));
+        let owner = steps.iter_mut().find(|(_, runs)| {
+            runs.iter()
+                .any(|run| mentions_path(&run.cmd, change.path()))
+        });
         match owner {
             Some((step, _)) => step.files.push(change.clone()),
             None => other_files.push(change.clone()),
@@ -273,9 +274,9 @@ pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
     }
 }
 
-/// Whether the command line asks for this package by name, so that
+/// Whether the command line names this package, unit or account, so that
 /// `dnf install -y nginx` claims nginx but not nginx-core.
-fn names_package(cmd: &str, name: &str) -> bool {
+pub fn names_item(cmd: &str, name: &str) -> bool {
     cmd.split(|c: char| !(c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '+')))
         .any(|word| word == name)
 }
@@ -288,7 +289,7 @@ pub fn attribute_packages(runbook: &mut Runbook, diff: packages::Diff) {
     for package in explicit {
         let owner = runbook.steps.iter_mut().find(|step| {
             step.commands()
-                .any(|run| names_package(&run.cmd, &package.name))
+                .any(|run| names_item(&run.cmd, &package.name))
         });
         match owner {
             Some(step) => step.packages.push(package),
@@ -306,7 +307,7 @@ pub fn attribute_state(runbook: &mut Runbook, diff: state::Diff) {
         let bare = name.rsplit_once('.').map(|(n, _)| n).unwrap_or(&name);
         if let Some(step) = runbook.steps.iter_mut().find(|step| {
             step.commands()
-                .any(|run| names_package(&run.cmd, &name) || names_package(&run.cmd, bare))
+                .any(|run| names_item(&run.cmd, &name) || names_item(&run.cmd, bare))
         }) {
             step.state.push(name);
         }

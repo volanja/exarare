@@ -74,6 +74,7 @@ The prompt gets a `[rec]` prefix. Work as usual:
 | `exarare list` | List recorded sessions |
 | `exarare diff [ID]` | Show the file changes of a session (default: the most recent) |
 | `exarare gen md [ID] [-o FILE] [--lang en\|ja]` | Write a Markdown runbook for a session |
+| `exarare gen ansible [ID] [-o DIR] [--lang en\|ja]` | Write an Ansible playbook for a session |
 | `exarare step TEXT` | Start a step of the runbook |
 | `exarare note TEXT` | Add a remark to the step being worked on |
 
@@ -138,6 +139,46 @@ Files that change on their own (`/etc/ld.so.cache`, `/etc/mtab`, lock files,
 editor backups) are skipped. For secrets (`/etc/shadow`, `*.key`, `*.pem`,
 anything under a `private/` directory) the change is reported but the content
 is never stored. Content is stored only for text files up to 1 MiB.
+
+### The playbook
+
+```sh
+exarare gen ansible -o ansible
+```
+
+This writes `ansible/playbook.yml` and an `ansible/files/` tree holding the
+content of the files that changed. What the probes observed becomes a task:
+
+| Observed | Module |
+|---|---|
+| package installed on purpose | `ansible.builtin.dnf` |
+| file added or edited | `ansible.builtin.copy` (content under `files/`, `backup: true`) |
+| file removed | `ansible.builtin.file`, `state: absent` |
+| only mode changed | `ansible.builtin.file` with `mode` |
+| unit enabled or started | `ansible.builtin.systemd` |
+| firewall service or port | `ansible.posix.firewalld` |
+| user or group | `ansible.builtin.user` / `ansible.builtin.group` |
+| anything else that ran | `ansible.builtin.command` or `shell`, behind a TODO |
+
+The generated playbook passes `ansible-lint` at its `production` profile, which
+CI checks on every change. The firewall tasks need the `ansible.posix`
+collection.
+
+A few things are deliberately left to a human, and each is marked in the file
+and printed when the playbook is generated:
+
+- A command no probe could explain is replayed exactly as it was typed, with
+  `changed_when: true` and a `TODO: make idempotent` comment. Claiming
+  `changed_when: false` would be a lie, and dropping the command would hide
+  work that mattered.
+- A file whose content was not recorded — a secret, a binary, or one over the
+  size limit — gets a TODO instead of a copy task, because the content is
+  genuinely unavailable.
+- The recorded owner is written as a comment with its numeric uid and gid,
+  since the same numbers may belong to different accounts on the target host.
+
+Task names are always English: `ansible-lint` requires them to start with a
+capital letter. `--lang` changes the comments, which are what a reviewer reads.
 
 ### Packages
 
@@ -207,7 +248,7 @@ readable only by its owner, because recordings can contain secrets.
 - [ ] Markdown runbook generation
 - [x] Probe for RPM / dnf
 - [x] Probes for systemd, firewalld, users and groups
-- [ ] Ansible playbook generation
+- [x] Ansible playbook generation
 - [ ] Optional auditd backend
 - [ ] CI on AlmaLinux / UBI 8, 9 and 10, static binaries and RPM packages
 

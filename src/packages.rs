@@ -8,10 +8,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::sys::{has_command, output};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Package {
@@ -40,28 +41,6 @@ impl Snapshot {
     pub fn knows_user_installed(&self) -> bool {
         !self.user_installed.is_empty()
     }
-}
-
-/// Runs a command and returns its standard output.
-fn output(program: &str, args: &[&str]) -> Result<String> {
-    let out = Command::new(program)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run {program}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!(
-            "{program} {} failed: {}",
-            args.join(" "),
-            stderr.lines().next().unwrap_or("no output").trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-fn has_command(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
 }
 
 /// `name\tEVR\tarch` per line, as produced by `rpm -qa --qf`.

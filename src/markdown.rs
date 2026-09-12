@@ -275,6 +275,13 @@ fn procedure<'a>(
             }
             out.push('\n');
         }
+        if !step.state.is_empty() {
+            let _ = writeln!(out, "#### {}\n", msg.step_state());
+            for name in &step.state {
+                let _ = writeln!(out, "- `{name}`");
+            }
+            out.push('\n');
+        }
         if step.files.is_empty() {
             continue;
         }
@@ -295,14 +302,15 @@ fn what_changed<'a>(
     let runbook = input.runbook;
     let _ = writeln!(out, "## 5. {}\n", msg.what_changed());
     packages_section(out, runbook, msg);
+    state_section(out, runbook, msg);
 
     let total =
         runbook.steps.iter().map(|s| s.files.len()).sum::<usize>() + runbook.other_files.len();
+    let _ = writeln!(out, "### {}\n", msg.changed_files());
     if total == 0 {
         let _ = writeln!(out, "{}\n", msg.no_changes());
         return;
     }
-    let _ = writeln!(out, "### {}\n", msg.changed_files());
     let _ = writeln!(out, "| {} | {} |\n|---|---|", msg.path(), msg.change());
     for change in runbook
         .steps
@@ -394,6 +402,113 @@ fn packages_section(out: &mut String, runbook: &Runbook, msg: &Messages) {
     }
 }
 
+fn bullets(out: &mut String, label: &str, values: &[String]) {
+    if values.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "**{label}**\n");
+    for value in values {
+        let _ = writeln!(out, "- `{value}`");
+    }
+    out.push('\n');
+}
+
+/// Services, firewall rules and accounts. A subsystem that did not answer says
+/// so, because "nothing changed" and "nothing was read" are different facts.
+fn state_section(out: &mut String, runbook: &Runbook, msg: &Messages) {
+    let diff = &runbook.state;
+    let _ = writeln!(out, "### {}\n", msg.services());
+
+    if !diff.errors.is_empty() {
+        let _ = writeln!(out, "> {}\n", msg.packages_incomplete());
+        for error in &diff.errors {
+            let _ = writeln!(out, "> - {error}");
+        }
+        out.push('\n');
+    }
+    if !diff.systemd_known {
+        let _ = writeln!(out, "{}\n", msg.systemd_unavailable());
+    }
+    if !diff.firewall_known {
+        let _ = writeln!(out, "{}\n", msg.firewall_unavailable());
+    }
+
+    for (label, values) in [
+        (msg.units_enabled(), &diff.units_enabled),
+        (msg.units_disabled(), &diff.units_disabled),
+        (msg.services_started(), &diff.services_started),
+        (msg.services_stopped(), &diff.services_stopped),
+        (msg.firewall_services_added(), &diff.firewall_services_added),
+        (
+            msg.firewall_services_removed(),
+            &diff.firewall_services_removed,
+        ),
+        (msg.firewall_ports_added(), &diff.firewall_ports_added),
+        (msg.firewall_ports_removed(), &diff.firewall_ports_removed),
+    ] {
+        bullets(out, label, values);
+    }
+
+    let accounts_changed = !diff.users_added.is_empty()
+        || !diff.users_removed.is_empty()
+        || !diff.users_changed.is_empty()
+        || !diff.groups_added.is_empty()
+        || !diff.groups_removed.is_empty();
+    if accounts_changed {
+        let _ = writeln!(out, "### {}\n", msg.accounts());
+        for (label, users) in [
+            (msg.users_added(), &diff.users_added),
+            (msg.users_removed(), &diff.users_removed),
+        ] {
+            if users.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "**{label}**\n");
+            for user in users {
+                let _ = writeln!(
+                    out,
+                    "- `{}` (uid {}, gid {}, home `{}`, shell `{}`)",
+                    user.name, user.uid, user.gid, user.home, user.shell
+                );
+            }
+            out.push('\n');
+        }
+        if !diff.users_changed.is_empty() {
+            let _ = writeln!(out, "**{}**\n", msg.users_changed());
+            for (before, after) in &diff.users_changed {
+                let _ = writeln!(out, "- `{}`", after.name);
+                for (field, old, new) in [
+                    ("uid", before.uid.to_string(), after.uid.to_string()),
+                    ("gid", before.gid.to_string(), after.gid.to_string()),
+                    ("home", before.home.clone(), after.home.clone()),
+                    ("shell", before.shell.clone(), after.shell.clone()),
+                ] {
+                    if old != new {
+                        let _ = writeln!(out, "  - {field}: `{old}` → `{new}`");
+                    }
+                }
+            }
+            out.push('\n');
+        }
+        let group_names = |groups: &[crate::state::Group]| -> Vec<String> {
+            groups
+                .iter()
+                .map(|g| format!("{} (gid {})", g.name, g.gid))
+                .collect()
+        };
+        bullets(out, msg.groups_added(), &group_names(&diff.groups_added));
+        bullets(
+            out,
+            msg.groups_removed(),
+            &group_names(&diff.groups_removed),
+        );
+    }
+
+    if diff.is_empty() && diff.systemd_known {
+        let _ = writeln!(out, "{}\n", msg.no_state_changes());
+    }
+}
+
 fn verification(out: &mut String, runbook: &Runbook, msg: &Messages) {
     let _ = writeln!(out, "## 6. {}\n", msg.verification());
     if runbook.verifications.is_empty() {
@@ -419,9 +534,19 @@ fn rollback(out: &mut String, runbook: &Runbook, msg: &Messages) {
         .chain(runbook.other_files.iter())
         .collect();
     let installed = runbook.packages.explicit_installs();
-    if files.is_empty() && installed.is_empty() {
+    let mut undo_state: Vec<String> = runbook.state.units_enabled.clone();
+    undo_state.extend(runbook.state.users_added.iter().map(|u| u.name.clone()));
+    undo_state.extend(runbook.state.groups_added.iter().map(|g| g.name.clone()));
+    if files.is_empty() && installed.is_empty() && undo_state.is_empty() {
         let _ = writeln!(out, "{}\n", msg.rollback_none());
         return;
+    }
+    if !undo_state.is_empty() {
+        let _ = writeln!(out, "### {}\n", msg.rollback_state());
+        for name in &undo_state {
+            let _ = writeln!(out, "- `{name}`");
+        }
+        out.push('\n');
     }
     if !installed.is_empty() {
         let _ = writeln!(out, "### {}\n", msg.rollback_packages());
@@ -740,6 +865,85 @@ mod tests {
             changed.contains("No package changes were recorded."),
             "{changed}"
         );
+    }
+
+    #[test]
+    fn renders_service_and_account_changes() {
+        use crate::state::{Diff, Group, User};
+
+        let diff = Diff {
+            systemd_known: true,
+            firewall_known: true,
+            units_enabled: vec!["nginx.service".into()],
+            services_started: vec!["nginx.service".into()],
+            firewall_services_added: vec!["http".into()],
+            firewall_ports_added: vec!["8080/tcp".into()],
+            users_added: vec![User {
+                name: "deploy".into(),
+                uid: 1001,
+                gid: 1001,
+                home: "/home/deploy".into(),
+                shell: "/bin/bash".into(),
+            }],
+            groups_added: vec![Group {
+                name: "deploy".into(),
+                gid: 1001,
+                members: vec!["deploy".into()],
+            }],
+            ..Default::default()
+        };
+
+        let mut runbook = step::build(&events(), &[]);
+        step::attribute_state(&mut runbook, diff);
+        let meta = meta();
+        let doc = render(
+            &Input {
+                meta: &meta,
+                runbook: &runbook,
+                blobs: Path::new("/nonexistent"),
+                version: "0.1.0",
+            },
+            &Locale::En.messages(),
+        );
+
+        // `systemctl enable --now nginx` names the unit without its suffix.
+        let step_section = doc.split(". Install nginx").nth(1).unwrap();
+        let step_section = step_section.split("## 5.").next().unwrap();
+        assert!(
+            step_section.contains("#### Services and accounts changed in this step"),
+            "{step_section}"
+        );
+        assert!(step_section.contains("- `nginx.service`"), "{step_section}");
+
+        let changed = doc.split("## 5. What changed").nth(1).unwrap();
+        let changed = changed.split("## 6.").next().unwrap();
+        assert!(changed.contains("**Enabled at boot**"), "{changed}");
+        assert!(
+            changed.contains("**Firewall services opened**"),
+            "{changed}"
+        );
+        assert!(changed.contains("**Ports opened**"), "{changed}");
+        assert!(changed.contains("### Users and groups"), "{changed}");
+        assert!(
+            changed.contains("- `deploy` (uid 1001, gid 1001, home `/home/deploy`"),
+            "{changed}"
+        );
+
+        let rollback = doc.split("## 7. Rollback").nth(1).unwrap();
+        assert!(
+            rollback.contains("Services to disable and accounts to remove"),
+            "{rollback}"
+        );
+    }
+
+    /// systemd and firewalld not answering is different from nothing changing.
+    #[test]
+    fn says_when_service_state_was_not_read() {
+        let doc = rendered(Locale::En);
+        let changed = doc.split("### Services and firewall").nth(1).unwrap();
+        assert!(changed.contains("systemd did not answer"), "{changed}");
+        assert!(changed.contains("firewalld did not answer"), "{changed}");
+        assert!(!changed.contains("No service, firewall"), "{changed}");
     }
 
     #[test]

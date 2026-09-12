@@ -6,7 +6,9 @@ mod packages;
 mod session;
 mod shell;
 mod snapshot;
+mod state;
 mod step;
+mod sys;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -161,6 +163,7 @@ fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> R
     session.append(EventKind::SessionStart)?;
     take_snapshot(&session, "before")?;
     take_packages(&session, "before");
+    take_state(&session, "before");
     eprintln!(
         "exarare: recording session {} — type `exit` or run `exarare stop` to finish",
         session.meta.id
@@ -180,6 +183,7 @@ fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> R
     result?;
 
     take_packages(&session, "after");
+    take_state(&session, "after");
     let changes = match take_snapshot(&session, "after") {
         Ok(_) => file_changes(&session).map(|c| c.len()).unwrap_or(0),
         Err(e) => {
@@ -237,6 +241,24 @@ fn package_changes(session: &Session) -> packages::Diff {
     let before = packages::load(&session.packages_path("before")).unwrap_or_default();
     let after = packages::load(&session.packages_path("after")).unwrap_or_default();
     packages::compare(&before, &after)
+}
+
+/// Reads service, firewall and account state. Subsystems that do not answer —
+/// systemd inside a container, a stopped firewalld — are recorded as unknown.
+fn take_state(session: &Session, which: &str) {
+    let snapshot = state::capture();
+    for error in &snapshot.errors {
+        eprintln!("exarare: {error}");
+    }
+    if let Err(e) = state::save(&snapshot, &session.state_path(which)) {
+        eprintln!("exarare: {e:#}");
+    }
+}
+
+fn state_changes(session: &Session) -> state::Diff {
+    let before = state::load(&session.state_path("before")).unwrap_or_default();
+    let after = state::load(&session.state_path("after")).unwrap_or_default();
+    state::compare(&before, &after)
 }
 
 fn file_changes(session: &Session) -> Result<Vec<diff::Change>> {
@@ -333,6 +355,7 @@ fn show_diff(id: Option<String>) -> Result<ExitCode> {
     let changes = file_changes(&session)?;
     print!("{}", diff::render(&changes, &session.blobs_dir()));
     print!("{}", packages::render(&package_changes(&session)));
+    print!("{}", state::render(&state_changes(&session)));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -343,6 +366,7 @@ fn gen_md(id: Option<String>, output: Option<PathBuf>, lang: Option<String>) -> 
     let changes = file_changes(&session)?;
     let mut runbook = step::build(&session.events()?, &changes);
     step::attribute_packages(&mut runbook, package_changes(&session));
+    step::attribute_state(&mut runbook, state_changes(&session));
     let blobs = session.blobs_dir();
     let document = markdown::render(
         &markdown::Input {

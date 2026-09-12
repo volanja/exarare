@@ -12,8 +12,14 @@ use common::{record_with, which, with_exarare_on_path};
 fn reports_a_file_touched_outside_the_snapshot() {
     let bash = which("bash").expect("bash not found");
     let snapshotted = tempfile::tempdir().unwrap();
-    let watched = tempfile::tempdir().unwrap();
-    let elsewhere = watched.path();
+    // Not under /tmp: the watcher excludes scratch space on purpose, and on
+    // Linux that is exactly where a temporary directory lands. `target/` is
+    // inside the checkout, so it is watched like any working directory would be.
+    std::fs::create_dir_all("target").unwrap();
+    let watched = tempfile::tempdir_in("target").unwrap();
+    // Absolute, so the path the watcher reports and the path the command writes
+    // are the same string.
+    let elsewhere = watched.path().canonicalize().unwrap();
 
     // The file lives under a watched root, not a snapshotted one, so no content
     // is recorded and only the fact that it was written can be reported.

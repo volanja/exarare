@@ -174,6 +174,11 @@ impl Session {
         self.dir.join("packages").join(format!("{which}.json"))
     }
 
+    /// Path of the `before` or `after` service, firewall and account state.
+    pub fn state_path(&self, which: &str) -> PathBuf {
+        self.dir.join("state").join(format!("{which}.json"))
+    }
+
     pub fn append(&self, kind: EventKind) -> Result<()> {
         append_event(&self.dir, &Event::now(kind))
     }

@@ -7,6 +7,7 @@ use time::OffsetDateTime;
 use crate::diff::Change;
 use crate::event::{Event, EventKind};
 use crate::packages::{self, Package};
+use crate::state;
 
 /// One command as it ran.
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +42,8 @@ pub struct Step {
     pub files: Vec<Change>,
     /// Packages a command of this step asked for by name.
     pub packages: Vec<Package>,
+    /// Units, firewall rules, users and groups a command of this step names.
+    pub state: Vec<String>,
 }
 
 impl Step {
@@ -69,6 +72,8 @@ pub struct Runbook {
     pub packages: packages::Diff,
     /// Packages no step claimed.
     pub other_packages: Vec<Package>,
+    /// Service, firewall, user and group changes over the whole session.
+    pub state: state::Diff,
     /// True when the operator never ran `exarare step`.
     pub without_steps: bool,
 }
@@ -233,6 +238,7 @@ pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
                     items,
                     files: Vec::new(),
                     packages: Vec::new(),
+                    state: Vec::new(),
                 },
                 all_commands,
             )
@@ -262,6 +268,7 @@ pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
         verifications,
         packages: packages::Diff::default(),
         other_packages: Vec::new(),
+        state: state::Diff::default(),
         without_steps,
     }
 }
@@ -289,6 +296,22 @@ pub fn attribute_packages(runbook: &mut Runbook, diff: packages::Diff) {
         }
     }
     runbook.packages = diff;
+}
+
+/// Places a unit, firewall rule, user or group in the step that named it, so
+/// that `systemctl enable nginx` claims nginx.service.
+pub fn attribute_state(runbook: &mut Runbook, diff: state::Diff) {
+    for name in diff.names() {
+        // `systemctl enable nginx` is written without the .service suffix.
+        let bare = name.rsplit_once('.').map(|(n, _)| n).unwrap_or(&name);
+        if let Some(step) = runbook.steps.iter_mut().find(|step| {
+            step.commands()
+                .any(|run| names_package(&run.cmd, &name) || names_package(&run.cmd, bare))
+        }) {
+            step.state.push(name);
+        }
+    }
+    runbook.state = diff;
 }
 
 #[cfg(test)]
@@ -463,6 +486,37 @@ mod tests {
         let runbook = build(&events, &changes);
         assert_eq!(runbook.steps[0].files.len(), 1);
         assert!(runbook.other_files.is_empty());
+    }
+
+    #[test]
+    fn attributes_units_named_without_their_suffix() {
+        let events = vec![
+            step("Install nginx"),
+            cmd("systemctl enable --now nginx"),
+            done(0),
+            step("Add the deploy user"),
+            cmd("useradd -m deploy"),
+            done(0),
+        ];
+        let mut runbook = build(&events, &[]);
+        attribute_state(
+            &mut runbook,
+            state::Diff {
+                systemd_known: true,
+                units_enabled: vec!["nginx.service".into()],
+                users_added: vec![state::User {
+                    name: "deploy".into(),
+                    uid: 1001,
+                    gid: 1001,
+                    home: "/home/deploy".into(),
+                    shell: "/bin/bash".into(),
+                }],
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(runbook.steps[0].state, vec!["nginx.service".to_string()]);
+        assert_eq!(runbook.steps[1].state, vec!["deploy".to_string()]);
     }
 
     #[test]

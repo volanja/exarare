@@ -318,6 +318,108 @@ impl Messages {
         )
     }
 
+    // --- Services, firewall, accounts ---
+
+    pub fn services(&self) -> &'static str {
+        msg!(self, "Services and firewall", "サービスとファイアウォール")
+    }
+
+    pub fn accounts(&self) -> &'static str {
+        msg!(self, "Users and groups", "ユーザーとグループ")
+    }
+
+    pub fn units_enabled(&self) -> &'static str {
+        msg!(self, "Enabled at boot", "自動起動を有効化")
+    }
+
+    pub fn units_disabled(&self) -> &'static str {
+        msg!(self, "Disabled at boot", "自動起動を無効化")
+    }
+
+    pub fn services_started(&self) -> &'static str {
+        msg!(self, "Running afterwards", "作業後に稼働中")
+    }
+
+    pub fn services_stopped(&self) -> &'static str {
+        msg!(self, "No longer running", "稼働を停止")
+    }
+
+    pub fn firewall_services_added(&self) -> &'static str {
+        msg!(self, "Firewall services opened", "許可したサービス")
+    }
+
+    pub fn firewall_services_removed(&self) -> &'static str {
+        msg!(self, "Firewall services closed", "許可を解除したサービス")
+    }
+
+    pub fn firewall_ports_added(&self) -> &'static str {
+        msg!(self, "Ports opened", "開放したポート")
+    }
+
+    pub fn firewall_ports_removed(&self) -> &'static str {
+        msg!(self, "Ports closed", "閉じたポート")
+    }
+
+    pub fn users_added(&self) -> &'static str {
+        msg!(self, "Users added", "追加したユーザー")
+    }
+
+    pub fn users_removed(&self) -> &'static str {
+        msg!(self, "Users removed", "削除したユーザー")
+    }
+
+    pub fn users_changed(&self) -> &'static str {
+        msg!(self, "Users changed", "変更したユーザー")
+    }
+
+    pub fn groups_added(&self) -> &'static str {
+        msg!(self, "Groups added", "追加したグループ")
+    }
+
+    pub fn groups_removed(&self) -> &'static str {
+        msg!(self, "Groups removed", "削除したグループ")
+    }
+
+    pub fn no_state_changes(&self) -> &'static str {
+        msg!(
+            self,
+            "No service, firewall, user or group changes were recorded.",
+            "サービス、ファイアウォール、ユーザー、グループの変更は記録されていません。"
+        )
+    }
+
+    pub fn systemd_unavailable(&self) -> &'static str {
+        msg!(
+            self,
+            "Service state was not recorded: systemd did not answer, as happens inside a container.",
+            "サービスの状態は記録されていません。コンテナ内などで systemd が応答しなかったためです。"
+        )
+    }
+
+    pub fn firewall_unavailable(&self) -> &'static str {
+        msg!(
+            self,
+            "Firewall rules were not recorded: firewalld did not answer.",
+            "ファイアウォールの設定は記録されていません。firewalld が応答しなかったためです。"
+        )
+    }
+
+    pub fn step_state(&self) -> &'static str {
+        msg!(
+            self,
+            "Services and accounts changed in this step",
+            "このステップで変更したサービスとアカウント"
+        )
+    }
+
+    pub fn rollback_state(&self) -> &'static str {
+        msg!(
+            self,
+            "Services to disable and accounts to remove",
+            "無効化するサービスと削除するアカウント"
+        )
+    }
+
     pub fn name(&self) -> &'static str {
         msg!(self, "Name", "名前")
     }

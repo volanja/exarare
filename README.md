@@ -154,6 +154,24 @@ A package is placed in the step whose commands name it, the same way files are.
 On a host without rpm — macOS, or a Debian-based system — nothing is recorded
 and the runbook says so, rather than reporting every package as removed.
 
+### Services, firewall and accounts
+
+The same before-and-after comparison covers state that does not live in a file:
+
+- units enabled or disabled at boot, and services running afterwards
+  (`systemctl list-unit-files`, `list-units`)
+- firewalld services and ports, from the permanent configuration
+- users and groups, read from `/etc/passwd` and `/etc/group` — never from
+  `/etc/shadow`, so no password hash is ever recorded
+
+A unit is placed in the step that named it, including when the command leaves
+the suffix off, as `systemctl enable nginx` does. A subsystem that does not
+answer — systemd inside a container, a stopped firewalld — is reported as not
+recorded, which is not the same as reporting no change.
+
+Persistent settings under `/etc`, such as sysctl drop-ins and unit overrides,
+are already covered by the file snapshots.
+
 ### Where data is stored
 
 Sessions are saved under `~/.local/share/exarare/sessions/<id>/`
@@ -166,6 +184,7 @@ readable only by its owner, because recordings can contain secrets.
 | `events.jsonl` | One JSON event per line: commands, exit codes, notes |
 | `snapshots/before.jsonl`, `snapshots/after.jsonl` | One entry per file: hash, size, mode, owner |
 | `packages/before.json`, `packages/after.json` | Installed packages, explicit installs, repositories, module streams |
+| `state/before.json`, `state/after.json` | Enabled units, running services, firewall rules, users, groups |
 | `blobs/` | Content of the text files, addressed by hash |
 
 ### Limitations
@@ -187,7 +206,7 @@ readable only by its owner, because recordings can contain secrets.
 - [x] File snapshots and diffs
 - [ ] Markdown runbook generation
 - [x] Probe for RPM / dnf
-- [ ] Probes for systemd, firewalld and users
+- [x] Probes for systemd, firewalld, users and groups
 - [ ] Ansible playbook generation
 - [ ] Optional auditd backend
 - [ ] CI on AlmaLinux / UBI 8, 9 and 10, static binaries and RPM packages

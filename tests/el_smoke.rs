@@ -88,4 +88,14 @@ fn records_dnf_and_etc_edits() {
     let changed = changed.split("## 6.").next().unwrap();
     assert!(changed.contains("**Installed**"), "{changed}");
     assert!(changed.contains(&format!("| `{PACKAGE}` |")), "{changed}");
+
+    // Service state is reported either way: a container has no running systemd,
+    // and the chapter must say that rather than imply nothing changed.
+    let services = changed.split("### Services and firewall").nth(1).unwrap();
+    assert!(
+        services.contains("systemd did not answer")
+            || services.contains("No service, firewall")
+            || services.contains("**Enabled at boot**"),
+        "{services}"
+    );
 }

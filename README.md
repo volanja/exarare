@@ -11,11 +11,6 @@ LLM, using plain rules.
 Target platforms: **RHEL and AlmaLinux 8, 9 and 10**. Recording also works on
 macOS, which is handy for development.
 
-> [!WARNING]
-> Exarare is at an early stage. Command recording and file diffs work today;
-> package detection and runbook / playbook generation are under development
-> (see [Roadmap](#roadmap)).
-
 ## Why
 
 Tools that record a terminal session capture command lines and output, but
@@ -103,13 +98,14 @@ template only a human can fill in — Exarare does not guess at intent:
 |---|---|
 | 1. Purpose | template: what, why, definition of done |
 | 2. Overview of the work | generated: the steps in order, with counts |
-| 3. Prerequisites | generated host and watched paths, plus a template |
-| 4. Procedure | generated: one section per `exarare note`, with commands and diffs |
-| 5. What changed | generated: every changed file |
+| 3. Prerequisites | generated host, snapshotted and watched directories, plus a template |
+| 4. Procedure | generated: one section per `exarare step`, with its commands, notes, packages, diffs and touched paths |
+| 5. What changed | generated: packages, files, services, firewall rules, accounts, and paths that were touched |
 | 6. Verification | generated candidates (`systemctl status`, `curl`, ...), expected results left blank |
 | 7. Rollback | generated candidates, behind a warning that they are not a verified procedure |
 | Appendix A | generated: every command that ran, including failures and retries |
-| Appendix B | generated: how the document was produced |
+| Appendix B | generated: the full diff of any file shortened in chapter 4 or 5, so it appears only when one was |
+| Appendix C | generated: how the document was produced |
 
 Chapter 4 shows only the commands that worked, so trial and error does not
 become an instruction; nothing is lost, because appendix A keeps everything.
@@ -272,7 +268,7 @@ readable only by its owner, because recordings can contain secrets.
 
 | File | Content |
 |---|---|
-| `meta.json` | Session name, host, user, shell, watched directories, start and end time |
+| `meta.json` | Session name, host, user, shell, snapshotted and watched directories, start and end time |
 | `events.jsonl` | One JSON event per line: commands, exit codes, notes |
 | `snapshots/before.jsonl`, `snapshots/after.jsonl` | One entry per file: hash, size, mode, owner |
 | `packages/before.json`, `packages/after.json` | Installed packages, explicit installs, repositories, module streams |
@@ -357,15 +353,22 @@ covered by unit tests over captured output and need a VM for a real check.
 
 ## Roadmap
 
-- [x] Recording shell (bash / zsh hooks)
+- [x] Recording shell (bash and zsh hooks)
 - [x] File snapshots and diffs
-- [ ] Markdown runbook generation
-- [x] Probe for RPM / dnf
+- [x] Markdown runbook, with an optional Mermaid overview
+- [x] Probe for RPM and dnf
 - [x] Probes for systemd, firewalld, users and groups
-- [x] Ansible playbook generation
-- [x] Watch for touched files (inotify / FSEvents)
-- [ ] Optional auditd backend
-- [ ] CI on AlmaLinux / UBI 8, 9 and 10, static binaries and RPM packages
+- [x] Ansible playbook, checked against `ansible-lint` in CI
+- [x] Watching for touched files (inotify and FSEvents)
+- [x] CI on AlmaLinux and UBI 8, 9 and 10; static binaries and RPMs built on a tag
+
+Deliberately postponed until real use shows they are needed, since both change
+how recording works rather than what is reported:
+
+- [ ] Recording command output ([#9](https://github.com/volanja/exarare/issues/9)),
+      which would need a PTY, rules for full-screen programs, and redaction
+- [ ] An auditd backend ([#7](https://github.com/volanja/exarare/issues/7)) for
+      commands run in a nested shell, which cannot be verified in a container
 
 ## License
 

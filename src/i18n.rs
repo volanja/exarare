@@ -670,8 +670,8 @@ impl Messages {
     pub fn appendix_generated(&self) -> &'static str {
         msg!(
             self,
-            "Appendix B: how this was generated",
-            "付録B: この文書の生成条件"
+            "Appendix C: how this was generated",
+            "付録C: この文書の生成条件"
         )
     }
 
@@ -737,6 +737,37 @@ mod tests {
     fn defaults_to_english() {
         assert_eq!(Locale::default(), Locale::En);
         assert_eq!(Locale::resolve(Some("ja")).unwrap(), Locale::Ja);
+    }
+
+    /// Two appendices once carried the same letter, in both locales, and only a
+    /// read-through caught it.
+    #[test]
+    fn appendix_letters_are_distinct() {
+        for locale in [Locale::En, Locale::Ja] {
+            let msg = locale.messages();
+            let titles = [
+                msg.appendix_log(),
+                msg.appendix_diffs(),
+                msg.appendix_generated(),
+            ];
+            let letters: Vec<&str> = titles
+                .iter()
+                .map(|title| {
+                    title
+                        .split(':')
+                        .next()
+                        .expect("an appendix title names itself before the colon")
+                })
+                .collect();
+            let mut unique = letters.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(
+                unique.len(),
+                letters.len(),
+                "{locale:?} reuses an appendix letter: {letters:?}"
+            );
+        }
     }
 
     #[test]

@@ -1,8 +1,11 @@
 mod diff;
 mod event;
+mod i18n;
+mod markdown;
 mod session;
 mod shell;
 mod snapshot;
+mod step;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -14,6 +17,7 @@ use nix::unistd::Pid;
 use time::OffsetDateTime;
 
 use event::{Event, EventKind};
+use i18n::Locale;
 use session::{ENV_SESSION_DIR, Session, Status};
 
 #[derive(Parser)]
@@ -52,6 +56,11 @@ enum Cmd {
         /// Session id, as shown by `exarare list`
         session: Option<String>,
     },
+    /// Generate a document from a recorded session
+    Gen {
+        #[command(subcommand)]
+        target: GenTarget,
+    },
     /// Insert a heading into the runbook, e.g. `exarare note "Install nginx"`
     Note {
         #[arg(required = true)]
@@ -62,6 +71,21 @@ enum Cmd {
     Hook {
         #[command(subcommand)]
         hook: Hook,
+    },
+}
+
+#[derive(Subcommand)]
+enum GenTarget {
+    /// A Markdown runbook
+    Md {
+        /// Session id, as shown by `exarare list` (defaults to the most recent)
+        session: Option<String>,
+        /// Write to this file instead of standard output
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Language of the generated text: en or ja. Defaults to EXARARE_LANG, then en.
+        #[arg(long)]
+        lang: Option<String>,
     },
 }
 
@@ -87,6 +111,13 @@ fn main() -> ExitCode {
         Cmd::Status => status(),
         Cmd::List => list(),
         Cmd::Diff { session } => show_diff(session),
+        Cmd::Gen { target } => match target {
+            GenTarget::Md {
+                session,
+                output,
+                lang,
+            } => gen_md(session, output, lang),
+        },
         Cmd::Note { text } => note(text.join(" ")),
         Cmd::Hook { hook } => {
             // Never disturb the user's shell: a lost event is better than an error on every prompt.
@@ -149,12 +180,10 @@ fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> R
         session.meta.id,
         session.dir.display()
     );
-    if changes > 0 {
-        eprintln!(
-            "exarare: run `exarare diff {}` to see them",
-            session.meta.id
-        );
-    }
+    eprintln!(
+        "exarare: run `exarare gen md {}` for a runbook",
+        session.meta.id
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -245,23 +274,60 @@ fn list() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn show_diff(id: Option<String>) -> Result<ExitCode> {
+/// The session named by `id`, or the most recent one.
+fn resolve_session(id: Option<String>) -> Result<Session> {
     let sessions = Session::list()?;
-    let session = match &id {
+    match &id {
         Some(id) => sessions
             .into_iter()
             .find(|s| &s.meta.id == id)
-            .with_context(|| format!("no session {id}"))?,
-        None => sessions.into_iter().next_back().context("no sessions")?,
-    };
+            .with_context(|| format!("no session {id}")),
+        None => sessions.into_iter().next_back().context("no sessions"),
+    }
+}
+
+fn require_finished_snapshots(session: &Session) -> Result<()> {
     if !session.snapshot_path("after").exists() {
         bail!(
             "session {} has no `after` snapshot (still recording, or it was aborted)",
             session.meta.id
         );
     }
+    Ok(())
+}
+
+fn show_diff(id: Option<String>) -> Result<ExitCode> {
+    let session = resolve_session(id)?;
+    require_finished_snapshots(&session)?;
     let changes = file_changes(&session)?;
     print!("{}", diff::render(&changes, &session.blobs_dir()));
+    Ok(ExitCode::SUCCESS)
+}
+
+fn gen_md(id: Option<String>, output: Option<PathBuf>, lang: Option<String>) -> Result<ExitCode> {
+    let session = resolve_session(id)?;
+    require_finished_snapshots(&session)?;
+    let locale = Locale::resolve(lang.as_deref())?;
+    let changes = file_changes(&session)?;
+    let runbook = step::build(&session.events()?, &changes);
+    let blobs = session.blobs_dir();
+    let document = markdown::render(
+        &markdown::Input {
+            meta: &session.meta,
+            runbook: &runbook,
+            blobs: &blobs,
+            version: env!("CARGO_PKG_VERSION"),
+        },
+        &locale.messages(),
+    );
+    match output {
+        Some(path) => {
+            std::fs::write(&path, &document)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            eprintln!("exarare: wrote {}", path.display());
+        }
+        None => print!("{document}"),
+    }
     Ok(ExitCode::SUCCESS)
 }
 

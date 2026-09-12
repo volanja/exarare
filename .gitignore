@@ -3,3 +3,7 @@
 # Coverage reports
 /lcov.info
 /coverage/
+# Generated runbooks and playbooks, written here by default or by habit
+/ansible/
+/playbook-*/
+/runbook*.md

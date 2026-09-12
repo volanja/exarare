@@ -55,8 +55,23 @@ jobs:
       # 5.1 on EL9, 5.2 on EL10).
       - name: Install build and test dependencies
         run: |
-          dnf install -y git gcc zsh procps-ng
-          dnf clean all
+          # The repodata baked into the image goes stale after a point release,
+          # and dnf then asks every mirror for a checksum none of them has, so
+          # the cache is cleared before anything is fetched. Mirrors can also be
+          # briefly unreachable, hence the retries.
+          for attempt in 1 2 3; do
+            dnf clean all
+            dnf install -y --setopt=install_weak_deps=False \
+              git gcc zsh procps-ng && break
+            echo "attempt $attempt failed"
+            sleep 10
+          done
+          for tool in git gcc zsh ps; do
+            command -v "$tool" >/dev/null || {
+              echo "::error::$tool was not installed"
+              exit 1
+            }
+          done
       - uses: actions/checkout@v5
       - name: Install Rust
         run: |

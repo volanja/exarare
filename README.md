@@ -33,14 +33,26 @@ changed* inside the files you edited. Exarare combines:
 
 ## Installation
 
-Requires Rust 1.85 or later.
+Each release on the
+[Releases](https://github.com/volanja/exarare/releases) page carries a
+statically linked binary and an RPM for x86_64 and aarch64, with a SHA-256
+checksum beside each file. One static binary runs on EL 8, 9 and 10, whatever
+their glibc.
+
+```sh
+# RPM
+sudo dnf install ./exarare-0.1.0-1.x86_64.rpm
+
+# or the binary on its own
+tar xf exarare-x86_64-unknown-linux-musl.tar.gz
+sudo install -m 0755 exarare /usr/local/bin/
+```
+
+From source, with Rust 1.85 or later:
 
 ```sh
 cargo install --git https://github.com/volanja/exarare
 ```
-
-Prebuilt static binaries and RPM packages will be published on the
-[Releases](https://github.com/volanja/exarare/releases) page.
 
 ## Usage
 

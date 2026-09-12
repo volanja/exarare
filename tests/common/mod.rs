@@ -40,6 +40,7 @@ pub struct Recorded {
 pub struct Recording {
     pub commands: Vec<Recorded>,
     pub notes: Vec<String>,
+    pub steps: Vec<String>,
     pub session_id: String,
     pub session_dir: PathBuf,
     pub data_dir: PathBuf,
@@ -133,6 +134,7 @@ pub fn record_with(shell: &Path, script: &str, extra: &[&OsStr]) -> Recording {
 
     let mut commands: Vec<Recorded> = Vec::new();
     let mut notes = Vec::new();
+    let mut steps = Vec::new();
     let mut last_cmd = None;
     for ev in &events {
         match ev["kind"].as_str().unwrap() {
@@ -145,12 +147,14 @@ pub fn record_with(shell: &Path, script: &str, extra: &[&OsStr]) -> Recording {
             }
             "cmd_end" => commands[last_cmd.unwrap()].exit_code = ev["exit_code"].as_i64(),
             "note" => notes.push(ev["text"].as_str().unwrap().to_string()),
+            "step" => steps.push(ev["title"].as_str().unwrap().to_string()),
             _ => {}
         }
     }
     Recording {
         commands,
         notes,
+        steps,
         session_id: meta["id"].as_str().unwrap().to_string(),
         session_dir,
         data_dir: data,

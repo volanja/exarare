@@ -15,8 +15,10 @@ fn generates_a_runbook() {
     fs::write(root.join("app.conf"), "listen 80\n").unwrap();
 
     let script = format!(
-        "exarare note Configure the app\n\
+        "exarare step Configure the app\n\
          printf 'listen 443\\n' > {root}/app.conf\n\
+         exarare note reload is required afterwards\n\
+         chmod 600 {root}/app.conf\n\
          cat {root}/app.conf\n\
          bash --version\n\
          false\n\
@@ -27,6 +29,11 @@ fn generates_a_runbook() {
         &bash,
         &with_exarare_on_path(&script),
         &[OsStr::new("--watch"), root.as_os_str()],
+    );
+    assert_eq!(recording.steps, vec!["Configure the app".to_string()]);
+    assert_eq!(
+        recording.notes,
+        vec!["reload is required afterwards".to_string()]
     );
 
     let doc = recording.exarare(&["gen", "md", &recording.session_id]);
@@ -59,17 +66,27 @@ fn generates_a_runbook() {
     // The rollback chapter warns before it suggests anything.
     assert!(doc.contains("not a verified rollback procedure"), "{doc}");
 
-    // The heading became a step, and the edit is shown with its diff.
+    // `exarare step` became the section heading, and the edit is shown with its diff.
     assert!(doc.contains("Configure the app"), "{doc}");
     assert!(doc.contains("-listen 80"), "{doc}");
     assert!(doc.contains("+listen 443"), "{doc}");
 
-    // `cat` is inspection and `false` failed, so neither is an instruction,
-    // but the appendix keeps both.
     let procedure = doc.split("## 4. Procedure").nth(1).unwrap();
     let procedure = procedure.split("## 5.").next().unwrap();
+
+    // `exarare note` is a remark inside the step, placed where it was recorded.
+    let note_at = procedure
+        .find("> **Note**: reload is required afterwards")
+        .unwrap_or_else(|| panic!("note missing: {procedure}"));
+    let printf_at = procedure.find("printf 'listen 443").unwrap();
+    let chmod_at = procedure.find("chmod 600").unwrap();
+    assert!(printf_at < note_at && note_at < chmod_at, "{procedure}");
+
+    // `cat` is inspection, `bash --version` is a check and `false` failed, so
+    // none of them is an instruction, but the appendix keeps all of them.
     assert!(!procedure.contains("cat "), "{procedure}");
     assert!(!procedure.contains("false"), "{procedure}");
+    assert!(!procedure.contains("bash --version"), "{procedure}");
     let appendix = doc.split("Appendix A").nth(1).unwrap();
     assert!(appendix.contains("false"), "{appendix}");
     assert!(appendix.contains("cat "), "{appendix}");
@@ -104,8 +121,9 @@ fn generates_japanese_and_writes_to_a_file() {
     assert!(doc.contains("## 1. 目的"), "{doc}");
     assert!(doc.contains("## 7. 切り戻し"), "{doc}");
     assert!(doc.contains("> **要記入**"), "{doc}");
-    // No note was recorded, so the session is one step and says so.
+    // No step was recorded, so the session is one step and says so.
     assert!(doc.contains("セッション全体"), "{doc}");
+    assert!(doc.contains("`exarare step"), "{doc}");
     // Recorded commands are never translated.
     assert!(doc.contains("echo hello"), "{doc}");
 }

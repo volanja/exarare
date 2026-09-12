@@ -23,7 +23,11 @@ pub enum EventKind {
     CmdEnd {
         exit_code: i32,
     },
-    /// A heading or remark inserted by `exarare note`.
+    /// Starts a step of the runbook: `exarare step "Install nginx"`.
+    Step {
+        title: String,
+    },
+    /// A remark about the step being worked on: `exarare note "needs EPEL"`.
     Note {
         text: String,
     },

@@ -139,6 +139,21 @@ editor backups) are skipped. For secrets (`/etc/shadow`, `*.key`, `*.pem`,
 anything under a `private/` directory) the change is reported but the content
 is never stored. Content is stored only for text files up to 1 MiB.
 
+### Packages
+
+Exarare reads the rpm database before and after the session instead of parsing
+what `dnf` printed, so the record does not depend on the dnf version or on
+whether the install came from a script:
+
+- packages installed, removed and upgraded, with versions
+- which of them were asked for by name, and how many came along as
+  dependencies (`dnf repoquery --userinstalled`)
+- repositories enabled or disabled, and module streams enabled on EL8 and EL9
+
+A package is placed in the step whose commands name it, the same way files are.
+On a host without rpm — macOS, or a Debian-based system — nothing is recorded
+and the runbook says so, rather than reporting every package as removed.
+
 ### Where data is stored
 
 Sessions are saved under `~/.local/share/exarare/sessions/<id>/`
@@ -150,6 +165,7 @@ readable only by its owner, because recordings can contain secrets.
 | `meta.json` | Session name, host, user, shell, watched directories, start and end time |
 | `events.jsonl` | One JSON event per line: commands, exit codes, notes |
 | `snapshots/before.jsonl`, `snapshots/after.jsonl` | One entry per file: hash, size, mode, owner |
+| `packages/before.json`, `packages/after.json` | Installed packages, explicit installs, repositories, module streams |
 | `blobs/` | Content of the text files, addressed by hash |
 
 ### Limitations
@@ -170,7 +186,8 @@ readable only by its owner, because recordings can contain secrets.
 - [x] Recording shell (bash / zsh hooks)
 - [x] File snapshots and diffs
 - [ ] Markdown runbook generation
-- [ ] Probes for RPM / dnf, systemd, firewalld and users
+- [x] Probe for RPM / dnf
+- [ ] Probes for systemd, firewalld and users
 - [ ] Ansible playbook generation
 - [ ] Optional auditd backend
 - [ ] CI on AlmaLinux / UBI 8, 9 and 10, static binaries and RPM packages

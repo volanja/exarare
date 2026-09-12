@@ -175,6 +175,18 @@ impl Messages {
         )
     }
 
+    pub fn count_packages(&self, n: usize) -> String {
+        msg!(
+            self,
+            if n == 1 {
+                "1 package".to_string()
+            } else {
+                format!("{n} packages")
+            },
+            format!("パッケージ {n} 件")
+        )
+    }
+
     pub fn count_files(&self, n: usize) -> String {
         msg!(
             self,
@@ -243,6 +255,75 @@ impl Messages {
 
     pub fn changed_files(&self) -> &'static str {
         msg!(self, "Files", "ファイル")
+    }
+
+    pub fn packages(&self) -> &'static str {
+        msg!(self, "Packages", "パッケージ")
+    }
+
+    pub fn packages_installed(&self) -> &'static str {
+        msg!(self, "Installed", "追加")
+    }
+
+    pub fn packages_removed(&self) -> &'static str {
+        msg!(self, "Removed", "削除")
+    }
+
+    pub fn packages_upgraded(&self) -> &'static str {
+        msg!(self, "Upgraded", "更新")
+    }
+
+    pub fn packages_dependencies(&self, n: usize) -> String {
+        msg!(
+            self,
+            format!("{n} more were installed as dependencies"),
+            format!("依存関係として {n} 件が追加されました")
+        )
+    }
+
+    pub fn repositories_added(&self) -> &'static str {
+        msg!(self, "Repositories enabled", "有効化されたリポジトリ")
+    }
+
+    pub fn repositories_removed(&self) -> &'static str {
+        msg!(self, "Repositories disabled", "無効化されたリポジトリ")
+    }
+
+    pub fn modules_added(&self) -> &'static str {
+        msg!(self, "Module streams enabled", "有効化されたモジュール")
+    }
+
+    pub fn no_package_changes(&self) -> &'static str {
+        msg!(
+            self,
+            "No package changes were recorded.",
+            "パッケージの変更は記録されていません。"
+        )
+    }
+
+    pub fn packages_unavailable(&self) -> &'static str {
+        msg!(
+            self,
+            "Package state was not recorded: this host has no rpm.",
+            "パッケージの状態は記録されていません。このホストに rpm がありません。"
+        )
+    }
+
+    /// Introduces the reasons the package picture may be incomplete.
+    pub fn packages_incomplete(&self) -> &'static str {
+        msg!(
+            self,
+            "Some package information could not be read:",
+            "一部のパッケージ情報を取得できませんでした。"
+        )
+    }
+
+    pub fn name(&self) -> &'static str {
+        msg!(self, "Name", "名前")
+    }
+
+    pub fn version(&self) -> &'static str {
+        msg!(self, "Version", "バージョン")
     }
 
     pub fn no_changes(&self) -> &'static str {
@@ -320,6 +401,10 @@ impl Messages {
             "**These steps are generated candidates, not a verified rollback procedure.** Removing a package does not undo what installing it changed. Restoring a file does not undo what a service did while it was running. The order in which things must be undone cannot be derived from the record. Review and test every step before relying on it.",
             "**以下は自動生成した候補であり、検証された切り戻し手順ではありません。** パッケージを削除しても、インストール時に加わった変更は元に戻りません。ファイルを戻しても、その設定で動作していたサービスの処理は取り消せません。どの順序で戻すべきかは記録からは導けません。実際に使う前に、必ず内容を確認し、試してください。"
         )
+    }
+
+    pub fn rollback_packages(&self) -> &'static str {
+        msg!(self, "Packages to remove", "削除するパッケージ")
     }
 
     pub fn rollback_files(&self) -> &'static str {

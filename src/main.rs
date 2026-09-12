@@ -2,6 +2,7 @@ mod diff;
 mod event;
 mod i18n;
 mod markdown;
+mod packages;
 mod session;
 mod shell;
 mod snapshot;
@@ -159,6 +160,7 @@ fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> R
     let mut session = Session::create(name, &shell, watch_roots)?;
     session.append(EventKind::SessionStart)?;
     take_snapshot(&session, "before")?;
+    take_packages(&session, "before");
     eprintln!(
         "exarare: recording session {} — type `exit` or run `exarare stop` to finish",
         session.meta.id
@@ -177,6 +179,7 @@ fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> R
     session.save_meta()?;
     result?;
 
+    take_packages(&session, "after");
     let changes = match take_snapshot(&session, "after") {
         Ok(_) => file_changes(&session).map(|c| c.len()).unwrap_or(0),
         Err(e) => {
@@ -216,6 +219,24 @@ fn take_snapshot(session: &Session, which: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Reads the package state. A host without rpm records an empty snapshot, so
+/// that a later comparison reports nothing rather than a wipe.
+fn take_packages(session: &Session, which: &str) {
+    let snapshot = packages::capture();
+    for error in &snapshot.errors {
+        eprintln!("exarare: {error}");
+    }
+    if let Err(e) = packages::save(&snapshot, &session.packages_path(which)) {
+        eprintln!("exarare: {e:#}");
+    }
+}
+
+fn package_changes(session: &Session) -> packages::Diff {
+    let before = packages::load(&session.packages_path("before")).unwrap_or_default();
+    let after = packages::load(&session.packages_path("after")).unwrap_or_default();
+    packages::compare(&before, &after)
 }
 
 fn file_changes(session: &Session) -> Result<Vec<diff::Change>> {
@@ -311,6 +332,7 @@ fn show_diff(id: Option<String>) -> Result<ExitCode> {
     require_finished_snapshots(&session)?;
     let changes = file_changes(&session)?;
     print!("{}", diff::render(&changes, &session.blobs_dir()));
+    print!("{}", packages::render(&package_changes(&session)));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -319,7 +341,8 @@ fn gen_md(id: Option<String>, output: Option<PathBuf>, lang: Option<String>) -> 
     require_finished_snapshots(&session)?;
     let locale = Locale::resolve(lang.as_deref())?;
     let changes = file_changes(&session)?;
-    let runbook = step::build(&session.events()?, &changes);
+    let mut runbook = step::build(&session.events()?, &changes);
+    step::attribute_packages(&mut runbook, package_changes(&session));
     let blobs = session.blobs_dir();
     let document = markdown::render(
         &markdown::Input {

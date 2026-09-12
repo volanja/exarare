@@ -115,12 +115,13 @@ fn overview(out: &mut String, runbook: &Runbook, msg: &Messages) {
     for (i, step) in runbook.steps.iter().enumerate() {
         let _ = writeln!(
             out,
-            "{}. **{}** — {}{}{}",
+            "{}. **{}** — {}{sep}{}{sep}{}",
             i + 1,
             title_of(step, runbook.without_steps, msg),
             msg.count_commands(step.command_count()),
-            msg.list_separator(),
-            msg.count_files(step.files.len())
+            msg.count_packages(step.packages.len()),
+            msg.count_files(step.files.len()),
+            sep = msg.list_separator()
         );
     }
     out.push('\n');
@@ -267,6 +268,13 @@ fn procedure<'a>(
                     .join(", ")
             );
         }
+        if !step.packages.is_empty() {
+            let _ = writeln!(out, "#### {}\n", msg.packages());
+            for package in &step.packages {
+                let _ = writeln!(out, "- `{}` {}", package.name, package.version);
+            }
+            out.push('\n');
+        }
         if step.files.is_empty() {
             continue;
         }
@@ -286,6 +294,8 @@ fn what_changed<'a>(
 ) {
     let runbook = input.runbook;
     let _ = writeln!(out, "## 5. {}\n", msg.what_changed());
+    packages_section(out, runbook, msg);
+
     let total =
         runbook.steps.iter().map(|s| s.files.len()).sum::<usize>() + runbook.other_files.len();
     if total == 0 {
@@ -315,6 +325,75 @@ fn what_changed<'a>(
     }
 }
 
+/// Packages, repositories and module streams, from the rpm database rather
+/// than from what the commands printed.
+fn packages_section(out: &mut String, runbook: &Runbook, msg: &Messages) {
+    let diff = &runbook.packages;
+    let _ = writeln!(out, "### {}\n", msg.packages());
+
+    if !diff.errors.is_empty() {
+        let _ = writeln!(out, "> {}\n", msg.packages_incomplete());
+        for error in &diff.errors {
+            let _ = writeln!(out, "> - {error}");
+        }
+        out.push('\n');
+    }
+    if !diff.available {
+        let _ = writeln!(out, "{}\n", msg.packages_unavailable());
+        return;
+    }
+    if diff.is_empty() {
+        let _ = writeln!(out, "{}\n", msg.no_package_changes());
+        return;
+    }
+
+    let explicit = diff.explicit_installs();
+    if !explicit.is_empty() {
+        let _ = writeln!(out, "**{}**\n", msg.packages_installed());
+        let _ = writeln!(out, "| {} | {} |\n|---|---|", msg.name(), msg.version());
+        for package in &explicit {
+            let _ = writeln!(out, "| `{}` | {} |", package.name, package.version);
+        }
+        out.push('\n');
+        let dependencies = diff.dependency_installs().len();
+        if dependencies > 0 {
+            let _ = writeln!(out, "{}\n", msg.packages_dependencies(dependencies));
+        }
+    }
+    if !diff.removed.is_empty() {
+        let _ = writeln!(out, "**{}**\n", msg.packages_removed());
+        for package in &diff.removed {
+            let _ = writeln!(out, "- `{}` {}", package.name, package.version);
+        }
+        out.push('\n');
+    }
+    if !diff.upgraded.is_empty() {
+        let _ = writeln!(out, "**{}**\n", msg.packages_upgraded());
+        for upgrade in &diff.upgraded {
+            let _ = writeln!(
+                out,
+                "- `{}` {} → {}",
+                upgrade.name, upgrade.from, upgrade.to
+            );
+        }
+        out.push('\n');
+    }
+    for (label, values) in [
+        (msg.repositories_added(), &diff.repositories_added),
+        (msg.repositories_removed(), &diff.repositories_removed),
+        (msg.modules_added(), &diff.modules_added),
+    ] {
+        if values.is_empty() {
+            continue;
+        }
+        let _ = writeln!(out, "**{label}**\n");
+        for value in values {
+            let _ = writeln!(out, "- `{value}`");
+        }
+        out.push('\n');
+    }
+}
+
 fn verification(out: &mut String, runbook: &Runbook, msg: &Messages) {
     let _ = writeln!(out, "## 6. {}\n", msg.verification());
     if runbook.verifications.is_empty() {
@@ -339,15 +418,25 @@ fn rollback(out: &mut String, runbook: &Runbook, msg: &Messages) {
         .flat_map(|s| s.files.iter())
         .chain(runbook.other_files.iter())
         .collect();
-    if files.is_empty() {
+    let installed = runbook.packages.explicit_installs();
+    if files.is_empty() && installed.is_empty() {
         let _ = writeln!(out, "{}\n", msg.rollback_none());
         return;
     }
-    let _ = writeln!(out, "### {}\n", msg.rollback_files());
-    for change in files {
-        let _ = writeln!(out, "{}", change_line(change, msg));
+    if !installed.is_empty() {
+        let _ = writeln!(out, "### {}\n", msg.rollback_packages());
+        for package in &installed {
+            let _ = writeln!(out, "- `{}` {}", package.name, package.version);
+        }
+        out.push('\n');
     }
-    out.push('\n');
+    if !files.is_empty() {
+        let _ = writeln!(out, "### {}\n", msg.rollback_files());
+        for change in files {
+            let _ = writeln!(out, "{}", change_line(change, msg));
+        }
+        out.push('\n');
+    }
     todo(out, msg, "");
 }
 
@@ -547,6 +636,110 @@ mod tests {
         // The appendix keeps everything.
         let appendix = doc.split("Appendix A").nth(1).unwrap();
         assert!(appendix.contains("systemctl status nginx"));
+    }
+
+    #[test]
+    fn renders_package_changes() {
+        use crate::packages::{Diff, Package, Upgrade};
+
+        let package = |name: &str| Package {
+            name: name.into(),
+            version: "1:1.20.1-14.el9".into(),
+            arch: "x86_64".into(),
+        };
+        let diff = Diff {
+            available: true,
+            installed: vec![package("nginx"), package("nginx-core")],
+            upgraded: vec![Upgrade {
+                name: "bash".into(),
+                arch: "x86_64".into(),
+                from: "5.1.8-6.el9".into(),
+                to: "5.1.8-9.el9".into(),
+            }],
+            explicit: ["nginx".to_string()].into_iter().collect(),
+            explicit_known: true,
+            repositories_added: vec!["epel".into()],
+            ..Default::default()
+        };
+
+        let mut runbook = step::build(&events(), &[]);
+        step::attribute_packages(&mut runbook, diff);
+        let meta = meta();
+        let doc = render(
+            &Input {
+                meta: &meta,
+                runbook: &runbook,
+                blobs: Path::new("/nonexistent"),
+                version: "0.1.0",
+            },
+            &Locale::En.messages(),
+        );
+
+        // `dnf install -y nginx` names nginx, so the step claims it.
+        let step_section = doc.split("### 4.1. Install nginx").nth(1).unwrap();
+        let step_section = step_section.split("## 5.").next().unwrap();
+        assert!(step_section.contains("#### Packages"), "{step_section}");
+        assert!(
+            step_section.contains("- `nginx` 1:1.20.1-14.el9"),
+            "{step_section}"
+        );
+        // A dependency is not presented as something the operator asked for.
+        assert!(!step_section.contains("nginx-core"), "{step_section}");
+
+        let changed = doc.split("## 5. What changed").nth(1).unwrap();
+        let changed = changed.split("## 6.").next().unwrap();
+        assert!(changed.contains("**Installed**"), "{changed}");
+        assert!(
+            changed.contains("| `nginx` | 1:1.20.1-14.el9 |"),
+            "{changed}"
+        );
+        assert!(
+            changed.contains("1 more were installed as dependencies"),
+            "{changed}"
+        );
+        assert!(changed.contains("**Upgraded**"), "{changed}");
+        assert!(
+            changed.contains("`bash` 5.1.8-6.el9 → 5.1.8-9.el9"),
+            "{changed}"
+        );
+        assert!(changed.contains("Repositories enabled"), "{changed}");
+
+        // Rollback offers to remove what was installed, behind its disclaimer.
+        let rollback = doc.split("## 7. Rollback").nth(1).unwrap();
+        assert!(rollback.contains("Packages to remove"), "{rollback}");
+        assert!(rollback.contains("- `nginx`"), "{rollback}");
+    }
+
+    #[test]
+    fn distinguishes_no_packages_from_no_package_state() {
+        // A host without rpm must not be reported as one where nothing changed.
+        let unknown = rendered(Locale::En);
+        let changed = unknown.split("## 5. What changed").nth(1).unwrap();
+        assert!(changed.contains("this host has no rpm"), "{changed}");
+
+        let mut runbook = step::build(&events(), &[]);
+        step::attribute_packages(
+            &mut runbook,
+            crate::packages::Diff {
+                available: true,
+                ..Default::default()
+            },
+        );
+        let meta = meta();
+        let known = render(
+            &Input {
+                meta: &meta,
+                runbook: &runbook,
+                blobs: Path::new("/nonexistent"),
+                version: "0.1.0",
+            },
+            &Locale::En.messages(),
+        );
+        let changed = known.split("## 5. What changed").nth(1).unwrap();
+        assert!(
+            changed.contains("No package changes were recorded."),
+            "{changed}"
+        );
     }
 
     #[test]

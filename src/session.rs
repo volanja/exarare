@@ -169,6 +169,11 @@ impl Session {
         self.dir.join("blobs")
     }
 
+    /// Path of the `before` or `after` package state.
+    pub fn packages_path(&self, which: &str) -> PathBuf {
+        self.dir.join("packages").join(format!("{which}.json"))
+    }
+
     pub fn append(&self, kind: EventKind) -> Result<()> {
         append_event(&self.dir, &Event::now(kind))
     }

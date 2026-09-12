@@ -24,6 +24,8 @@ pub struct Input<'a> {
     /// Blob store of the session, for reading recorded file content.
     pub blobs: &'a Path,
     pub version: &'a str,
+    /// Draw the overview as a Mermaid flowchart instead of a numbered list.
+    pub mermaid: bool,
 }
 
 pub fn render(input: &Input, msg: &Messages) -> String {
@@ -32,7 +34,7 @@ pub fn render(input: &Input, msg: &Messages) -> String {
 
     metadata(&mut out, input, msg);
     purpose(&mut out, msg);
-    overview(&mut out, input.runbook, msg);
+    overview(&mut out, input.runbook, msg, input.mermaid);
     prerequisites(&mut out, input, msg);
     procedure(&mut out, input, msg, &mut long_diffs);
     what_changed(&mut out, input, msg, &mut long_diffs);
@@ -109,22 +111,58 @@ fn purpose(out: &mut String, msg: &Messages) {
     }
 }
 
-fn overview(out: &mut String, runbook: &Runbook, msg: &Messages) {
+/// Mermaid reads `"`, `<` and `>` as syntax, and a step title is whatever the
+/// operator typed, so they are replaced with the entity codes Mermaid accepts.
+fn mermaid_label(text: &str) -> String {
+    text.replace('"', "#quot;")
+        .replace('<', "#lt;")
+        .replace('>', "#gt;")
+        .replace(['\n', '\r'], " ")
+}
+
+fn overview(out: &mut String, runbook: &Runbook, msg: &Messages, mermaid: bool) {
     let _ = writeln!(out, "## 2. {}\n", msg.overview());
     let _ = writeln!(out, "{}\n", msg.overview_intro());
-    for (i, step) in runbook.steps.iter().enumerate() {
-        let _ = writeln!(
-            out,
-            "{}. **{}** — {}{sep}{}{sep}{}",
-            i + 1,
-            title_of(step, runbook.without_steps, msg),
+    let counts = |step: &Step| {
+        format!(
+            "{}{sep}{}{sep}{}",
             msg.count_commands(step.command_count()),
             msg.count_packages(step.packages.len()),
             msg.count_files(step.files.len()),
             sep = msg.list_separator()
-        );
+        )
+    };
+    if mermaid {
+        // One node per step, in the order the work happened. The numbered list
+        // is replaced rather than repeated: the same facts twice help nobody.
+        let _ = writeln!(out, "```mermaid");
+        let _ = writeln!(out, "flowchart TD");
+        for (i, step) in runbook.steps.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "    step{}[\"{}. {}<br/>{}\"]",
+                i + 1,
+                i + 1,
+                mermaid_label(&title_of(step, runbook.without_steps, msg)),
+                mermaid_label(&counts(step))
+            );
+        }
+        for i in 1..runbook.steps.len() {
+            let _ = writeln!(out, "    step{i} --> step{}", i + 1);
+        }
+        let _ = writeln!(out, "```\n");
+    } else {
+        for (i, step) in runbook.steps.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "{}. **{}** — {}",
+                i + 1,
+                title_of(step, runbook.without_steps, msg),
+                counts(step)
+            );
+        }
+        out.push('\n');
     }
-    out.push('\n');
     if runbook.without_steps {
         let _ = writeln!(out, "{}\n", msg.no_steps_hint());
     }
@@ -686,6 +724,7 @@ mod tests {
             runbook: &runbook,
             blobs: Path::new("/nonexistent"),
             version: "0.1.0",
+            mermaid: false,
         };
         render(&input, &locale.messages())
     }
@@ -796,6 +835,7 @@ mod tests {
                 runbook: &runbook,
                 blobs: Path::new("/nonexistent"),
                 version: "0.1.0",
+                mermaid: false,
             },
             &Locale::En.messages(),
         );
@@ -857,6 +897,7 @@ mod tests {
                 runbook: &runbook,
                 blobs: Path::new("/nonexistent"),
                 version: "0.1.0",
+                mermaid: false,
             },
             &Locale::En.messages(),
         );
@@ -902,6 +943,7 @@ mod tests {
                 runbook: &runbook,
                 blobs: Path::new("/nonexistent"),
                 version: "0.1.0",
+                mermaid: false,
             },
             &Locale::En.messages(),
         );
@@ -944,6 +986,77 @@ mod tests {
         assert!(changed.contains("systemd did not answer"), "{changed}");
         assert!(changed.contains("firewalld did not answer"), "{changed}");
         assert!(!changed.contains("No service, firewall"), "{changed}");
+    }
+
+    #[test]
+    fn draws_the_overview_as_a_flowchart() {
+        let events = [
+            crate::event::Event {
+                ts: OffsetDateTime::UNIX_EPOCH,
+                kind: EventKind::Step {
+                    title: "Install \"nginx\" <1.20>".into(),
+                },
+            },
+            crate::event::Event {
+                ts: OffsetDateTime::UNIX_EPOCH,
+                kind: EventKind::CmdStart {
+                    cmd: "dnf install -y nginx".into(),
+                    cwd: "/root".into(),
+                },
+            },
+            crate::event::Event {
+                ts: OffsetDateTime::UNIX_EPOCH,
+                kind: EventKind::CmdEnd { exit_code: 0 },
+            },
+            crate::event::Event {
+                ts: OffsetDateTime::UNIX_EPOCH,
+                kind: EventKind::Step {
+                    title: "Open the firewall".into(),
+                },
+            },
+            crate::event::Event {
+                ts: OffsetDateTime::UNIX_EPOCH,
+                kind: EventKind::CmdStart {
+                    cmd: "firewall-cmd --add-service=http --permanent".into(),
+                    cwd: "/root".into(),
+                },
+            },
+            crate::event::Event {
+                ts: OffsetDateTime::UNIX_EPOCH,
+                kind: EventKind::CmdEnd { exit_code: 0 },
+            },
+        ];
+        let runbook = step::build(&events, &[]);
+        let meta = meta();
+        let doc = render(
+            &Input {
+                meta: &meta,
+                runbook: &runbook,
+                blobs: Path::new("/nonexistent"),
+                version: "0.1.0",
+                mermaid: true,
+            },
+            &Locale::En.messages(),
+        );
+        let overview = doc.split("## 2.").nth(1).unwrap();
+        let overview = overview.split("## 3.").next().unwrap();
+
+        assert!(overview.contains("```mermaid"), "{overview}");
+        assert!(overview.contains("flowchart TD"), "{overview}");
+        assert!(overview.contains("step1 --> step2"), "{overview}");
+        assert!(overview.contains("1 command"), "{overview}");
+        // Characters Mermaid would read as syntax are escaped, not dropped.
+        assert!(
+            overview.contains("Install #quot;nginx#quot; #lt;1.20#gt;"),
+            "{overview}"
+        );
+        // The list is replaced rather than repeated.
+        assert!(!overview.contains("1. **"), "{overview}");
+
+        // Without the flag the list is what appears.
+        let plain = rendered(Locale::En);
+        assert!(!plain.contains("```mermaid"), "{plain}");
+        assert!(plain.contains("1. **"), "{plain}");
     }
 
     #[test]

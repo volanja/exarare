@@ -97,6 +97,28 @@ fn generates_a_runbook() {
 }
 
 #[test]
+fn draws_the_overview_as_a_flowchart_on_request() {
+    let bash = which("bash").expect("bash not found");
+    let watched = tempfile::tempdir().unwrap();
+    let script = "exarare step Install the package\necho installing\nexit\n";
+    let recording = record_with(
+        &bash,
+        &with_exarare_on_path(script),
+        &[OsStr::new("--watch"), watched.path().as_os_str()],
+    );
+
+    let plain = recording.exarare(&["gen", "md", &recording.session_id]);
+    assert!(!plain.contains("```mermaid"), "{plain}");
+
+    let drawn = recording.exarare(&["gen", "md", &recording.session_id, "--mermaid"]);
+    assert!(drawn.contains("```mermaid"), "{drawn}");
+    assert!(drawn.contains("flowchart TD"), "{drawn}");
+    assert!(drawn.contains("Install the package"), "{drawn}");
+    // The steps are linked in the order the work happened.
+    assert!(drawn.contains("step1 --> step2"), "{drawn}");
+}
+
+#[test]
 fn generates_japanese_and_writes_to_a_file() {
     let bash = which("bash").expect("bash not found");
     let watched = tempfile::tempdir().unwrap();

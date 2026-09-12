@@ -72,9 +72,14 @@ fn records_dnf_and_etc_edits() {
         "installed package not reported: {report}"
     );
 
-    // The runbook shows it as an install of the step that asked for it.
+    // The runbook shows it as an install of the step that asked for it. The
+    // section is found by title: the harness prepends a PATH line, which
+    // becomes the step before the first heading and shifts the numbering.
     let doc = recording.exarare(&["gen", "md", &recording.session_id]);
-    let step = doc.split("### 4.1. Install a package").nth(1).unwrap();
+    let step = doc
+        .split(". Install a package")
+        .nth(1)
+        .unwrap_or_else(|| panic!("step section missing: {doc}"));
     let step = step.split("## 5.").next().unwrap();
     assert!(step.contains("#### Packages"), "{step}");
     assert!(step.contains(&format!("- `{PACKAGE}`")), "{step}");

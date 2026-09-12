@@ -29,7 +29,7 @@ fn reports_file_changes() {
     let recording = record_with(
         &bash,
         &with_exarare_on_path(&script),
-        &[OsStr::new("--watch"), root.as_os_str()],
+        &[OsStr::new("--snapshot"), root.as_os_str()],
     );
 
     let report = recording.exarare(&["diff", &recording.session_id]);

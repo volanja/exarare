@@ -28,7 +28,7 @@ fn generates_a_runbook() {
     let recording = record_with(
         &bash,
         &with_exarare_on_path(&script),
-        &[OsStr::new("--watch"), root.as_os_str()],
+        &[OsStr::new("--snapshot"), root.as_os_str()],
     );
     assert_eq!(recording.steps, vec!["Configure the app".to_string()]);
     assert_eq!(
@@ -104,7 +104,7 @@ fn draws_the_overview_as_a_flowchart_on_request() {
     let recording = record_with(
         &bash,
         &with_exarare_on_path(script),
-        &[OsStr::new("--watch"), watched.path().as_os_str()],
+        &[OsStr::new("--snapshot"), watched.path().as_os_str()],
     );
 
     let plain = recording.exarare(&["gen", "md", &recording.session_id]);
@@ -125,7 +125,7 @@ fn generates_japanese_and_writes_to_a_file() {
     let recording = record_with(
         &bash,
         &with_exarare_on_path("echo hello\nexit\n"),
-        &[OsStr::new("--watch"), watched.path().as_os_str()],
+        &[OsStr::new("--snapshot"), watched.path().as_os_str()],
     );
 
     let out = watched.path().join("runbook.md");

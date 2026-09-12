@@ -41,7 +41,7 @@ fn check(shell: &Path) {
     let recording = record_with(
         shell,
         &with_exarare_on_path(&script),
-        &[OsStr::new("--watch"), watched.path().as_os_str()],
+        &[OsStr::new("--snapshot"), watched.path().as_os_str()],
     );
 
     assert_eq!(

@@ -10,6 +10,7 @@ mod snapshot;
 mod state;
 mod step;
 mod sys;
+mod watcher;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -45,9 +46,16 @@ enum Cmd {
         /// Shell to run (bash or zsh). Defaults to $SHELL.
         #[arg(long)]
         shell: Option<PathBuf>,
-        /// Directory to snapshot for file changes. Repeatable; defaults to /etc.
+        /// Directory whose content is snapshotted and diffed. Repeatable; defaults to /etc.
+        #[arg(long = "snapshot", value_name = "PATH")]
+        snapshot: Vec<PathBuf>,
+        /// Directory watched for touched files, with no content recorded. Repeatable;
+        /// defaults to /opt, /usr/local, /srv, /var/www, /root and /home when they exist.
         #[arg(long = "watch", value_name = "PATH")]
         watch: Vec<PathBuf>,
+        /// Do not watch the filesystem
+        #[arg(long)]
+        no_watcher: bool,
     },
     /// Finish the current recording (same as typing `exit` in the recording shell)
     Stop,
@@ -129,7 +137,13 @@ enum Hook {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Cmd::Start { name, shell, watch } => start(name, shell, watch),
+        Cmd::Start {
+            name,
+            shell,
+            snapshot,
+            watch,
+            no_watcher,
+        } => start(name, shell, snapshot, watch, no_watcher),
         Cmd::Stop => stop(),
         Cmd::Status => status(),
         Cmd::List => list(),
@@ -168,14 +182,27 @@ fn main() -> ExitCode {
     }
 }
 
-fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> Result<ExitCode> {
+fn start(
+    name: Option<String>,
+    shell: Option<PathBuf>,
+    snapshot: Vec<PathBuf>,
+    watch: Vec<PathBuf>,
+    no_watcher: bool,
+) -> Result<ExitCode> {
     if std::env::var_os(ENV_SESSION_DIR).is_some() {
         bail!("already recording in this shell (run `exarare status`)");
     }
     let shell = shell::resolve(shell);
     let kind = shell::Kind::detect(&shell)?;
-    let watch_roots = if watch.is_empty() {
-        session::default_watch_roots()
+    let snapshot_roots = if snapshot.is_empty() {
+        session::default_snapshot_roots()
+    } else {
+        snapshot
+    };
+    let watch_roots = if no_watcher {
+        Vec::new()
+    } else if watch.is_empty() {
+        watcher::default_roots()
     } else {
         watch
     };
@@ -189,11 +216,12 @@ fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> R
             "exarare: warning: the locale is not UTF-8, so a non-ASCII step title or note may be recorded incorrectly by an older shell. Set LC_ALL to a UTF-8 locale before starting."
         );
     }
-    let mut session = Session::create(name, &shell, watch_roots)?;
+    let mut session = Session::create(name, &shell, snapshot_roots, watch_roots)?;
     session.append(EventKind::SessionStart)?;
     take_snapshot(&session, "before")?;
     take_packages(&session, "before");
     take_state(&session, "before");
+    let fs_watcher = start_watcher(&session);
     eprintln!(
         "exarare: recording session {} — type `exit` or run `exarare stop` to finish",
         session.meta.id
@@ -206,6 +234,24 @@ fn start(name: Option<String>, shell: Option<PathBuf>, watch: Vec<PathBuf>) -> R
             eprintln!("exarare: {e:#}");
         }
     });
+
+    // Stopped before the `after` snapshot, so that exarare's own reads and
+    // writes cannot end up in the list of touched files.
+    if let Some(watcher) = fs_watcher {
+        let touched = watcher.finish();
+        for gap in &touched.incomplete_roots {
+            eprintln!("exarare: could not watch {gap}");
+        }
+        if touched.truncated {
+            eprintln!(
+                "exarare: more than {} paths were touched, so the list is incomplete",
+                watcher::MAX_PATHS
+            );
+        }
+        if let Err(e) = watcher::save(&touched, &session.touched_path()) {
+            eprintln!("exarare: {e:#}");
+        }
+    }
 
     session.append(EventKind::SessionEnd)?;
     session.meta.ended_at = Some(OffsetDateTime::now_utc());
@@ -240,7 +286,7 @@ fn take_snapshot(session: &Session, which: &str) -> Result<()> {
     std::fs::create_dir_all(out.parent().expect("snapshot path has a parent"))?;
     let rules = snapshot::Rules::defaults()?;
     let stats = snapshot::capture(
-        &session.meta.watch_roots,
+        &session.meta.snapshot_roots,
         &out,
         &session.blobs_dir(),
         &rules,
@@ -271,6 +317,32 @@ fn package_changes(session: &Session) -> packages::Diff {
     let before = packages::load(&session.packages_path("before")).unwrap_or_default();
     let after = packages::load(&session.packages_path("after")).unwrap_or_default();
     packages::compare(&before, &after)
+}
+
+/// Starts the filesystem watcher. It adds to the record rather than carrying
+/// it, so a failure to start is reported and the session goes on without it.
+fn start_watcher(session: &Session) -> Option<watcher::Watcher> {
+    if session.meta.watch_roots.is_empty() {
+        return None;
+    }
+    let rules = match watcher::Rules::new(session::data_dir().ok()) {
+        Ok(rules) => rules,
+        Err(e) => {
+            eprintln!("exarare: {e:#}");
+            return None;
+        }
+    };
+    match watcher::start(&session.meta.watch_roots, rules) {
+        Ok(watcher) => Some(watcher),
+        Err(e) => {
+            eprintln!("exarare: {e:#}");
+            None
+        }
+    }
+}
+
+fn touched_files(session: &Session) -> watcher::Touched {
+    watcher::load(&session.touched_path()).unwrap_or_default()
 }
 
 /// Reads service, firewall and account state. Subsystems that do not answer —
@@ -321,14 +393,19 @@ fn status() -> Result<ExitCode> {
     }
     println!("  started:  {}", meta.started_at);
     println!("  commands: {}", count_commands(&session.events()?));
-    println!(
-        "  watching: {}",
-        meta.watch_roots
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    let list = |paths: &[PathBuf]| {
+        if paths.is_empty() {
+            "-".to_string()
+        } else {
+            paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    };
+    println!("  snapshots: {}", list(&meta.snapshot_roots));
+    println!("  watching:  {}", list(&meta.watch_roots));
     println!("  data:     {}", session.dir.display());
     Ok(ExitCode::SUCCESS)
 }
@@ -386,6 +463,22 @@ fn show_diff(id: Option<String>) -> Result<ExitCode> {
     print!("{}", diff::render(&changes, &session.blobs_dir()));
     print!("{}", packages::render(&package_changes(&session)));
     print!("{}", state::render(&state_changes(&session)));
+
+    // Touched paths are listed after the changes, since they say less: a write
+    // happened, and nothing about what the content became.
+    let touched = touched_files(&session);
+    for path in touched.paths.keys() {
+        println!("touched      {}", path.display());
+    }
+    if touched.truncated {
+        println!(
+            "warning      more than {} paths were touched, list is incomplete",
+            watcher::MAX_PATHS
+        );
+    }
+    for gap in &touched.incomplete_roots {
+        println!("warning      could not watch {gap}");
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -409,6 +502,7 @@ fn gen_md(
             runbook: &runbook,
             blobs: &blobs,
             version: env!("CARGO_PKG_VERSION"),
+            touched: touched_files(&session),
             mermaid,
         },
         &locale.messages(),

@@ -79,6 +79,35 @@ jobs:
           fi
           echo "no RPM provides a command named exarare"
 
+  ansible-lint:
+    name: ansible-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pipx install ansible-lint
+      - name: Record a session and generate playbooks
+        run: |
+          set -euo pipefail
+          export EXARARE_HOME="$RUNNER_TEMP/exarare"
+          watch="$RUNNER_TEMP/etc"
+          mkdir -p "$watch/nginx"
+          printf 'listen 80\n' > "$watch/nginx/nginx.conf"
+          printf 'old\n' > "$watch/legacy.conf"
+          cargo build --locked
+          bin="$PWD/target/debug/exarare"
+          printf 'PATH=%s:$PATH\nexarare step Configure nginx\nprintf "listen 8080\\n" > %s/nginx/nginx.conf\nexarare note reload needed\nchmod 600 %s/nginx/nginx.conf\nrm %s/legacy.conf\nexit\n' \
+            "$(dirname "$bin")" "$watch" "$watch" "$watch" \
+            | "$bin" start --name "web01 nginx setup" --shell /bin/bash --watch "$watch"
+          id=$("$bin" list | tail -1 | awk '{print $1}')
+          "$bin" gen ansible "$id" -o playbook-en
+          "$bin" gen ansible "$id" -o playbook-ja --lang ja
+      - name: Lint the generated playbooks
+        run: |
+          ansible-lint playbook-en/playbook.yml
+          ansible-lint playbook-ja/playbook.yml
+
   coverage:
     name: coverage
     runs-on: ubuntu-latest

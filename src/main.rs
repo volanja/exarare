@@ -1,3 +1,4 @@
+mod ansible;
 mod diff;
 mod event;
 mod i18n;
@@ -95,6 +96,17 @@ enum GenTarget {
         #[arg(long)]
         lang: Option<String>,
     },
+    /// An Ansible playbook, written into a directory with its files
+    Ansible {
+        /// Session id, as shown by `exarare list` (defaults to the most recent)
+        session: Option<String>,
+        /// Directory to write playbook.yml and files/ into
+        #[arg(short, long, default_value = "ansible")]
+        output: PathBuf,
+        /// Language of the generated comments: en or ja
+        #[arg(long)]
+        lang: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -125,6 +137,11 @@ fn main() -> ExitCode {
                 output,
                 lang,
             } => gen_md(session, output, lang),
+            GenTarget::Ansible {
+                session,
+                output,
+                lang,
+            } => gen_ansible(session, output, lang),
         },
         Cmd::Step { title } => mark(EventKind::Step {
             title: title.join(" "),
@@ -384,6 +401,39 @@ fn gen_md(id: Option<String>, output: Option<PathBuf>, lang: Option<String>) -> 
             eprintln!("exarare: wrote {}", path.display());
         }
         None => print!("{document}"),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn gen_ansible(id: Option<String>, output: PathBuf, lang: Option<String>) -> Result<ExitCode> {
+    let session = resolve_session(id)?;
+    require_finished_snapshots(&session)?;
+    let locale = Locale::resolve(lang.as_deref())?;
+    let changes = file_changes(&session)?;
+    let mut runbook = step::build(&session.events()?, &changes);
+    step::attribute_packages(&mut runbook, package_changes(&session));
+    step::attribute_state(&mut runbook, state_changes(&session));
+
+    let blobs = session.blobs_dir();
+    let playbook = ansible::render(
+        &ansible::Input {
+            meta: &session.meta,
+            runbook: &runbook,
+            blobs: &blobs,
+            version: env!("CARGO_PKG_VERSION"),
+        },
+        &locale.messages(),
+    );
+    ansible::write(&playbook, &output)?;
+    eprintln!(
+        "exarare: wrote {} and {} file(s)",
+        output.join("playbook.yml").display(),
+        playbook.files.len()
+    );
+    // The warnings are what a human has to finish, so they are not left buried
+    // in the playbook alone.
+    for warning in &playbook.warnings {
+        eprintln!("exarare: {warning}");
     }
     Ok(ExitCode::SUCCESS)
 }

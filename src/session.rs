@@ -198,10 +198,14 @@ impl Session {
         if self.meta.ended_at.is_some() {
             return Status::Finished;
         }
-        let alive = self.meta.shell_pid.is_some_and(|pid| {
-            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
-        });
-        if alive {
+        // The pid is written just after the shell is spawned, so a session
+        // without one has only just started; the shell may already be running
+        // commands. Treating that as aborted would reject the first `exarare
+        // note` of a session.
+        let Some(pid) = self.meta.shell_pid else {
+            return Status::Recording;
+        };
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok() {
             Status::Recording
         } else {
             Status::Aborted
@@ -221,4 +225,51 @@ pub fn append_event(dir: &Path, event: &Event) -> Result<()> {
     // A single write keeps concurrent appends from interleaving.
     file.write_all(line.as_bytes())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(shell_pid: Option<u32>, ended: bool) -> Session {
+        let now = OffsetDateTime::now_utc();
+        Session {
+            dir: PathBuf::from("/nonexistent"),
+            meta: Meta {
+                id: "20260912-000000-0001".into(),
+                name: None,
+                hostname: None,
+                user: None,
+                shell: "/bin/bash".into(),
+                watch_roots: default_watch_roots(),
+                started_at: now,
+                ended_at: ended.then_some(now),
+                shell_pid,
+            },
+        }
+    }
+
+    #[test]
+    fn a_session_without_a_pid_is_still_recording() {
+        // Racing the parent, which writes the pid just after spawning the shell.
+        assert_eq!(session(None, false).status(), Status::Recording);
+    }
+
+    #[test]
+    fn status_follows_the_shell() {
+        assert_eq!(
+            session(Some(std::process::id()), false).status(),
+            Status::Recording
+        );
+        assert_eq!(
+            session(Some(std::process::id()), true).status(),
+            Status::Finished
+        );
+        // Above pid_max, so no such process exists. Pid 1 would not do: tests
+        // run as root in the EL containers, where signalling init succeeds.
+        assert_eq!(
+            session(Some(i32::MAX as u32), false).status(),
+            Status::Aborted
+        );
+    }
 }

@@ -14,8 +14,12 @@ fn enabled() -> bool {
     std::env::var("EXARARE_EL_TESTS").as_deref() == Ok("1")
 }
 
-const SCRIPT: &str = r##"exarare note Install a package
-dnf -y install zsh
+/// In BaseOS on every supported release, and not part of the base image, so
+/// installing it is a real change.
+const PACKAGE: &str = "zip";
+
+const SCRIPT: &str = r##"exarare step Install a package
+dnf -y install zip
 echo "# added by exarare smoke test" >> /etc/motd
 systemctl --version >/dev/null
 exit
@@ -36,19 +40,20 @@ fn records_dnf_and_etc_edits() {
     let lines = recording.command_lines();
 
     assert!(
-        lines.contains(&"dnf -y install zsh"),
+        lines.contains(&"dnf -y install zip"),
         "dnf command not recorded: {lines:?}"
     );
     assert!(
         lines.contains(&r##"echo "# added by exarare smoke test" >> /etc/motd"##),
         "redirection into /etc not recorded: {lines:?}"
     );
-    assert_eq!(recording.notes, vec!["Install a package".to_string()]);
+    assert_eq!(recording.steps, vec!["Install a package".to_string()]);
 
-    let dnf = recording.find("dnf -y install zsh").unwrap();
+    let dnf = recording.find("dnf -y install zip").unwrap();
     assert_eq!(dnf.exit_code, Some(0), "dnf failed inside the container");
 
-    // The snapshot of /etc must show the edit, with its diff.
+    // The snapshot of /etc must show the edit, with its diff, and the rpm
+    // database must show the package.
     let report = recording.exarare(&["diff", &recording.session_id]);
     assert!(
         report
@@ -60,4 +65,27 @@ fn records_dnf_and_etc_edits() {
         report.contains("+# added by exarare smoke test"),
         "diff body missing: {report}"
     );
+    assert!(
+        report
+            .lines()
+            .any(|l| l.starts_with("installed") && l.contains(PACKAGE)),
+        "installed package not reported: {report}"
+    );
+
+    // The runbook shows it as an install of the step that asked for it. The
+    // section is found by title: the harness prepends a PATH line, which
+    // becomes the step before the first heading and shifts the numbering.
+    let doc = recording.exarare(&["gen", "md", &recording.session_id]);
+    let step = doc
+        .split(". Install a package")
+        .nth(1)
+        .unwrap_or_else(|| panic!("step section missing: {doc}"));
+    let step = step.split("## 5.").next().unwrap();
+    assert!(step.contains("#### Packages"), "{step}");
+    assert!(step.contains(&format!("- `{PACKAGE}`")), "{step}");
+
+    let changed = doc.split("## 5. What changed").nth(1).unwrap();
+    let changed = changed.split("## 6.").next().unwrap();
+    assert!(changed.contains("**Installed**"), "{changed}");
+    assert!(changed.contains(&format!("| `{PACKAGE}` |")), "{changed}");
 }

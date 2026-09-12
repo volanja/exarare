@@ -6,6 +6,7 @@ use time::OffsetDateTime;
 
 use crate::diff::Change;
 use crate::event::{Event, EventKind};
+use crate::packages::{self, Package};
 
 /// One command as it ran.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +39,8 @@ pub struct Step {
     pub items: Vec<Item>,
     /// File changes a command of this step names by path.
     pub files: Vec<Change>,
+    /// Packages a command of this step asked for by name.
+    pub packages: Vec<Package>,
 }
 
 impl Step {
@@ -62,6 +65,10 @@ pub struct Runbook {
     pub other_files: Vec<Change>,
     /// Successful commands that look like checks.
     pub verifications: Vec<CommandRun>,
+    /// Package changes over the whole session.
+    pub packages: packages::Diff,
+    /// Packages no step claimed.
+    pub other_packages: Vec<Package>,
     /// True when the operator never ran `exarare step`.
     pub without_steps: bool,
 }
@@ -225,6 +232,7 @@ pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
                     title: title.clone(),
                     items,
                     files: Vec::new(),
+                    packages: Vec::new(),
                 },
                 all_commands,
             )
@@ -252,8 +260,35 @@ pub fn build(events: &[Event], changes: &[Change]) -> Runbook {
         log,
         other_files,
         verifications,
+        packages: packages::Diff::default(),
+        other_packages: Vec::new(),
         without_steps,
     }
+}
+
+/// Whether the command line asks for this package by name, so that
+/// `dnf install -y nginx` claims nginx but not nginx-core.
+fn names_package(cmd: &str, name: &str) -> bool {
+    cmd.split(|c: char| !(c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '+')))
+        .any(|word| word == name)
+}
+
+/// Places each explicitly installed package in the step that asked for it.
+/// Package state, like file state, is captured once before and once after, so
+/// this is the only way to say which step installed what.
+pub fn attribute_packages(runbook: &mut Runbook, diff: packages::Diff) {
+    let explicit: Vec<Package> = diff.explicit_installs().into_iter().cloned().collect();
+    for package in explicit {
+        let owner = runbook.steps.iter_mut().find(|step| {
+            step.commands()
+                .any(|run| names_package(&run.cmd, &package.name))
+        });
+        match owner {
+            Some(step) => step.packages.push(package),
+            None => runbook.other_packages.push(package),
+        }
+    }
+    runbook.packages = diff;
 }
 
 #[cfg(test)]

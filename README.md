@@ -241,6 +241,62 @@ readable only by its owner, because recordings can contain secrets.
 - File changes are found by comparing snapshots of the watched directories, so
   a file edited outside them is not noticed. Pass `--watch` for other paths.
 
+## Development
+
+```sh
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+The tests drive a real shell rather than a stub: `tests/record.rs` starts bash
+and zsh, types commands into them and reads back what was recorded, so both
+shells need to be installed. The zsh test skips itself when zsh is missing.
+
+### Checking a generated playbook
+
+CI lints the generated playbook, but running the linter locally catches a
+violation a round trip earlier:
+
+```sh
+python3 -m venv /tmp/ansible-venv && /tmp/ansible-venv/bin/pip install ansible-lint
+```
+
+Record a session, generate a playbook and lint it:
+
+```sh
+exarare gen ansible -o playbook-en
+/tmp/ansible-venv/bin/ansible-lint playbook-en/playbook.yml
+```
+
+The playbook is expected to pass at ansible-lint's `production` profile. CI has
+the last word: a local ansible-lint is pinned by whatever Python the system
+ships, and may be several releases behind.
+
+### Coverage
+
+```sh
+cargo install cargo-llvm-cov   # once
+cargo llvm-cov --summary-only
+```
+
+`octocov` reports the same number on every pull request. Do not chase the
+figure for `src/shell.rs`: the hooks are shell code inside Rust string
+constants, so the constants count as covered while the shell logic itself is
+measured by `tests/record.rs` running a real shell.
+
+### What only CI can check
+
+- the recording shell against bash 4.4, 5.1 and 5.2 on AlmaLinux and UBI 8, 9
+  and 10, and the zsh of each
+- `dnf` and `rpm` behaviour across those releases, where `tests/el_smoke.rs`
+  installs a package and edits `/etc`
+- these tests touch the system, so they only run with `EXARARE_EL_TESTS=1`,
+  inside throwaway containers
+
+systemd and firewalld do not run in those containers, so their probes are
+covered by unit tests over captured output and need a VM for a real check.
+
 ## Roadmap
 
 - [x] Recording shell (bash / zsh hooks)

@@ -240,6 +240,12 @@ readable only by its owner, because recordings can contain secrets.
 - Command output is not recorded yet.
 - File changes are found by comparing snapshots of the watched directories, so
   a file edited outside them is not noticed. Pass `--watch` for other paths.
+- A non-ASCII step title or note needs a UTF-8 locale. bash 3.2, which macOS
+  still ships, passes a mangled argument when `LC_ALL`, `LC_CTYPE` and `LANG`
+  all say the encoding is single-byte. Exarare warns at `exarare start` when
+  that is the case; set `LC_ALL` to a UTF-8 locale to avoid it. The locale is
+  not changed for you, because that would also change the behaviour of the
+  commands being recorded.
 
 ## Development
 

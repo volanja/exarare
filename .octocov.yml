@@ -2,16 +2,15 @@
 coverage:
   paths:
     - lcov.info
-  # Line coverage is 82% at the time this was added. The bar is deliberately
-  # lower: it should catch a large drop, not block work on a few lines.
+  # Line coverage was 82% when this was added and is around 90% now. The bar is
+  # deliberately lower: it should catch a large drop, not block work on a few
+  # lines.
   acceptable: 70%
 
-# Reported, but not enforced: no ratio has been agreed yet.
-codeToTestRatio:
-  code:
-    - src/**/*.rs
-  test:
-    - tests/**/*.rs
+# codeToTestRatio is deliberately not configured. Most of this project's tests
+# live in `#[cfg(test)] mod tests` inside src/**, so counting only tests/** made
+# the ratio fall as tests were added, and counting src/** on both sides would
+# compare the same lines with themselves. Coverage answers the same question.
 
 comment:
   if: is_pull_request

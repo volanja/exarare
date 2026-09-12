@@ -840,7 +840,7 @@ mod tests {
                 "6. Verification",
                 "7. Rollback",
                 "Appendix A: full command log",
-                "Appendix B: how this was generated",
+                "Appendix C: how this was generated",
             ]
         );
         assert!(doc.starts_with("# Build runbook: web01 nginx setup"));

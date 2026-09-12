@@ -55,7 +55,7 @@ fn generates_a_runbook() {
             "6. Verification",
             "7. Rollback",
             "Appendix A: full command log",
-            "Appendix B: how this was generated",
+            "Appendix C: how this was generated",
         ],
         "{doc}"
     );

@@ -72,7 +72,38 @@ The prompt gets a `[rec]` prefix. Work as usual:
 | `exarare status` | Show whether the current shell is being recorded |
 | `exarare list` | List recorded sessions |
 | `exarare diff [ID]` | Show the file changes of a session (default: the most recent) |
+| `exarare gen md [ID] [-o FILE] [--lang en\|ja]` | Write a Markdown runbook for a session |
 | `exarare note TEXT` | Insert a heading into the runbook |
+
+### The runbook
+
+```sh
+exarare gen md -o runbook.md
+```
+
+The document has a fixed shape. Some of it is generated, some of it is a
+template only a human can fill in — Exarare does not guess at intent:
+
+| Chapter | Source |
+|---|---|
+| 1. Purpose | template: what, why, definition of done |
+| 2. Overview of the work | generated: the steps in order, with counts |
+| 3. Prerequisites | generated host and watched paths, plus a template |
+| 4. Procedure | generated: one section per `exarare note`, with commands and diffs |
+| 5. What changed | generated: every changed file |
+| 6. Verification | generated candidates (`systemctl status`, `curl`, ...), expected results left blank |
+| 7. Rollback | generated candidates, behind a warning that they are not a verified procedure |
+| Appendix A | generated: every command that ran, including failures and retries |
+| Appendix B | generated: how the document was produced |
+
+Chapter 4 shows only the commands that worked, so trial and error does not
+become an instruction; nothing is lost, because appendix A keeps everything.
+Each `exarare note` starts a new step, and a session without notes is a single
+step. A file is placed in the step whose commands name its path.
+
+The fixed text is available in English (default) and Japanese, selected with
+`--lang` or the `EXARARE_LANG` environment variable. Recorded commands, paths
+and diffs are never translated.
 
 ### File changes
 

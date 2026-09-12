@@ -121,14 +121,36 @@ fn note(entry: &Entry) -> String {
     }
 }
 
-fn unified(path: &str, before: &str, after: &str) -> String {
-    let diff = TextDiff::from_lines(before, after);
-    let body = diff
+/// The unified diff of one change, when both sides were recorded as text.
+/// `None` for a binary, oversized or masked file, for symlinks, and for a
+/// change that is only in the mode or owner.
+pub fn unified_body(change: &Change, blobs: &Path) -> Option<String> {
+    let path = change.path().display().to_string();
+    match change {
+        Change::Added(entry) => Some(unified_raw(&path, "", &blob_text(blobs, entry)?)),
+        Change::Removed(entry) => Some(unified_raw(&path, &blob_text(blobs, entry)?, "")),
+        Change::Modified { before, after } => Some(unified_raw(
+            &path,
+            &blob_text(blobs, before)?,
+            &blob_text(blobs, after)?,
+        )),
+        Change::MetadataChanged { .. } => None,
+    }
+}
+
+fn unified_raw(path: &str, before: &str, after: &str) -> String {
+    TextDiff::from_lines(before, after)
         .unified_diff()
         .context_radius(3)
         .header(&format!("a{path}"), &format!("b{path}"))
-        .to_string();
-    body.lines().map(|l| format!("  {l}\n")).collect::<String>()
+        .to_string()
+}
+
+fn unified(path: &str, before: &str, after: &str) -> String {
+    unified_raw(path, before, after)
+        .lines()
+        .map(|l| format!("  {l}\n"))
+        .collect::<String>()
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ Target platforms: **RHEL and AlmaLinux 8, 9 and 10**. Recording also works on
 macOS, which is handy for development.
 
 > [!WARNING]
-> Exarare is at an early stage. Command recording works today; file diffs,
+> Exarare is at an early stage. Command recording and file diffs work today;
 > package detection and runbook / playbook generation are under development
 > (see [Roadmap](#roadmap)).
 
@@ -67,11 +67,36 @@ The prompt gets a `[rec]` prefix. Work as usual:
 
 | Command | Description |
 |---|---|
-| `exarare start [-n NAME] [--shell PATH]` | Start a recording shell (bash or zsh; defaults to `$SHELL`) |
+| `exarare start [-n NAME] [--shell PATH] [--watch PATH]...` | Start a recording shell (bash or zsh; defaults to `$SHELL`) |
 | `exarare stop` | Finish the current recording |
 | `exarare status` | Show whether the current shell is being recorded |
 | `exarare list` | List recorded sessions |
+| `exarare diff [ID]` | Show the file changes of a session (default: the most recent) |
 | `exarare note TEXT` | Insert a heading into the runbook |
+
+### File changes
+
+`exarare start` snapshots the watched directories — `/etc` unless you pass
+`--watch` — and snapshots them again when the session ends. `exarare diff`
+then reports added, removed, modified and re-permissioned files, with a
+unified diff for text files:
+
+```console
+$ exarare diff
+modified     /etc/nginx/nginx.conf
+  --- a/etc/nginx/nginx.conf
+  +++ b/etc/nginx/nginx.conf
+  @@ -34,7 +34,7 @@
+  -        listen       80;
+  +        listen       8080;
+permissions  /etc/nginx/conf.d/tls.conf
+  mode 644 -> 600, owner 0:0 -> 0:0
+```
+
+Files that change on their own (`/etc/ld.so.cache`, `/etc/mtab`, lock files,
+editor backups) are skipped. For secrets (`/etc/shadow`, `*.key`, `*.pem`,
+anything under a `private/` directory) the change is reported but the content
+is never stored. Content is stored only for text files up to 1 MiB.
 
 ### Where data is stored
 
@@ -81,8 +106,10 @@ readable only by its owner, because recordings can contain secrets.
 
 | File | Content |
 |---|---|
-| `meta.json` | Session name, host, user, shell, start and end time |
+| `meta.json` | Session name, host, user, shell, watched directories, start and end time |
 | `events.jsonl` | One JSON event per line: commands, exit codes, notes |
+| `snapshots/before.jsonl`, `snapshots/after.jsonl` | One entry per file: hash, size, mode, owner |
+| `blobs/` | Content of the text files, addressed by hash |
 
 ### Limitations
 
@@ -94,11 +121,13 @@ readable only by its owner, because recordings can contain secrets.
 - Commands run in a shell started inside the recording shell (e.g. `sudo -i`)
   are not recorded. Start the recording as root instead.
 - Command output is not recorded yet.
+- File changes are found by comparing snapshots of the watched directories, so
+  a file edited outside them is not noticed. Pass `--watch` for other paths.
 
 ## Roadmap
 
 - [x] Recording shell (bash / zsh hooks)
-- [ ] File snapshots and diffs
+- [x] File snapshots and diffs
 - [ ] Markdown runbook generation
 - [ ] Probes for RPM / dnf, systemd, firewalld and users
 - [ ] Ansible playbook generation

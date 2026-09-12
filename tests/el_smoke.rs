@@ -6,7 +6,9 @@
 
 mod common;
 
-use common::{record, which, with_exarare_on_path};
+use std::ffi::OsStr;
+
+use common::{record_with, which, with_exarare_on_path};
 
 fn enabled() -> bool {
     std::env::var("EXARARE_EL_TESTS").as_deref() == Ok("1")
@@ -15,7 +17,6 @@ fn enabled() -> bool {
 const SCRIPT: &str = r##"exarare note Install a package
 dnf -y install zsh
 echo "# added by exarare smoke test" >> /etc/motd
-sed -i '$d' /etc/motd
 systemctl --version >/dev/null
 exit
 "##;
@@ -27,8 +28,12 @@ fn records_dnf_and_etc_edits() {
         return;
     }
     let bash = which("bash").expect("bash not found");
-    let session = record(&bash, &with_exarare_on_path(SCRIPT));
-    let lines = session.command_lines();
+    let recording = record_with(
+        &bash,
+        &with_exarare_on_path(SCRIPT),
+        &[OsStr::new("--watch"), OsStr::new("/etc")],
+    );
+    let lines = recording.command_lines();
 
     assert!(
         lines.contains(&"dnf -y install zsh"),
@@ -38,8 +43,21 @@ fn records_dnf_and_etc_edits() {
         lines.contains(&r##"echo "# added by exarare smoke test" >> /etc/motd"##),
         "redirection into /etc not recorded: {lines:?}"
     );
-    assert_eq!(session.notes, vec!["Install a package".to_string()]);
+    assert_eq!(recording.notes, vec!["Install a package".to_string()]);
 
-    let dnf = session.find("dnf -y install zsh").unwrap();
+    let dnf = recording.find("dnf -y install zsh").unwrap();
     assert_eq!(dnf.exit_code, Some(0), "dnf failed inside the container");
+
+    // The snapshot of /etc must show the edit, with its diff.
+    let report = recording.exarare(&["diff", &recording.session_id]);
+    assert!(
+        report
+            .lines()
+            .any(|l| l.starts_with("modified") && l.ends_with("/etc/motd")),
+        "/etc/motd change not reported: {report}"
+    );
+    assert!(
+        report.contains("+# added by exarare smoke test"),
+        "diff body missing: {report}"
+    );
 }

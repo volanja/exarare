@@ -23,6 +23,9 @@ pub struct Meta {
     pub hostname: Option<String>,
     pub user: Option<String>,
     pub shell: String,
+    /// Directories snapshotted before and after the session.
+    #[serde(default = "default_watch_roots")]
+    pub watch_roots: Vec<PathBuf>,
     #[serde(with = "time::serde::rfc3339")]
     pub started_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option", default)]
@@ -46,6 +49,10 @@ impl std::fmt::Display for Status {
             Status::Aborted => "aborted",
         })
     }
+}
+
+pub fn default_watch_roots() -> Vec<PathBuf> {
+    vec![PathBuf::from("/etc")]
 }
 
 /// Root of all exarare data. `EXARARE_HOME` overrides the XDG location.
@@ -79,7 +86,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn create(name: Option<String>, shell: &Path) -> Result<Self> {
+    pub fn create(name: Option<String>, shell: &Path, watch_roots: Vec<PathBuf>) -> Result<Self> {
         let now = OffsetDateTime::now_utc();
         let stamp = now.format(format_description!(
             "[year][month][day]-[hour][minute][second]"
@@ -96,6 +103,7 @@ impl Session {
                 .and_then(|h| h.into_string().ok()),
             user: std::env::var("USER").ok(),
             shell: shell.display().to_string(),
+            watch_roots,
             started_at: now,
             ended_at: None,
             shell_pid: None,
@@ -152,6 +160,15 @@ impl Session {
         Ok(())
     }
 
+    /// Path of the `before` or `after` snapshot.
+    pub fn snapshot_path(&self, which: &str) -> PathBuf {
+        self.dir.join("snapshots").join(format!("{which}.jsonl"))
+    }
+
+    pub fn blobs_dir(&self) -> PathBuf {
+        self.dir.join("blobs")
+    }
+
     pub fn append(&self, kind: EventKind) -> Result<()> {
         append_event(&self.dir, &Event::now(kind))
     }
@@ -181,10 +198,14 @@ impl Session {
         if self.meta.ended_at.is_some() {
             return Status::Finished;
         }
-        let alive = self.meta.shell_pid.is_some_and(|pid| {
-            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
-        });
-        if alive {
+        // The pid is written just after the shell is spawned, so a session
+        // without one has only just started; the shell may already be running
+        // commands. Treating that as aborted would reject the first `exarare
+        // note` of a session.
+        let Some(pid) = self.meta.shell_pid else {
+            return Status::Recording;
+        };
+        if nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok() {
             Status::Recording
         } else {
             Status::Aborted
@@ -204,4 +225,51 @@ pub fn append_event(dir: &Path, event: &Event) -> Result<()> {
     // A single write keeps concurrent appends from interleaving.
     file.write_all(line.as_bytes())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(shell_pid: Option<u32>, ended: bool) -> Session {
+        let now = OffsetDateTime::now_utc();
+        Session {
+            dir: PathBuf::from("/nonexistent"),
+            meta: Meta {
+                id: "20260912-000000-0001".into(),
+                name: None,
+                hostname: None,
+                user: None,
+                shell: "/bin/bash".into(),
+                watch_roots: default_watch_roots(),
+                started_at: now,
+                ended_at: ended.then_some(now),
+                shell_pid,
+            },
+        }
+    }
+
+    #[test]
+    fn a_session_without_a_pid_is_still_recording() {
+        // Racing the parent, which writes the pid just after spawning the shell.
+        assert_eq!(session(None, false).status(), Status::Recording);
+    }
+
+    #[test]
+    fn status_follows_the_shell() {
+        assert_eq!(
+            session(Some(std::process::id()), false).status(),
+            Status::Recording
+        );
+        assert_eq!(
+            session(Some(std::process::id()), true).status(),
+            Status::Finished
+        );
+        // Above pid_max, so no such process exists. Pid 1 would not do: tests
+        // run as root in the EL containers, where signalling init succeeds.
+        assert_eq!(
+            session(Some(i32::MAX as u32), false).status(),
+            Status::Aborted
+        );
+    }
 }

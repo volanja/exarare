@@ -58,12 +58,11 @@ impl Step {
         self.commands().count()
     }
 
-    /// When the step's commands ran, which is how a touched file is placed in
-    /// it: the watcher knows the time of a write, not which command caused it.
-    pub fn time_range(&self) -> Option<(OffsetDateTime, OffsetDateTime)> {
-        let mut times = self.commands().map(|run| run.ts);
-        let first = times.next()?;
-        Some(times.fold((first, first), |(min, max), ts| (min.min(ts), max.max(ts))))
+    /// When the step's first command ran. A touched file is placed in the step
+    /// whose window it falls in, and the windows run from one step's start to
+    /// the next one's.
+    pub fn started_at(&self) -> Option<OffsetDateTime> {
+        self.commands().map(|run| run.ts).min()
     }
 }
 

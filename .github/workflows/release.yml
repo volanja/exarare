@@ -42,6 +42,9 @@ jobs:
       - uses: taiki-e/create-gh-release-action@v1
         with:
           title: exarare $version
+          # The section for this version becomes the release notes. A tag with
+          # no section fails here rather than publishing without them.
+          changelog: CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # The Linux binaries are static musl builds, so one of them runs on EL 8, 9

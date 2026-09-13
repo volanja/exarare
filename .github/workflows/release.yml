@@ -44,29 +44,40 @@ jobs:
           title: exarare $version
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Static musl binaries: one build runs on EL 8, 9 and 10 regardless of their
-  # glibc. cross is used for both targets because musl needs a C toolchain for
-  # the target, which its images carry.
+  # The Linux binaries are static musl builds, so one of them runs on EL 8, 9
+  # and 10 whatever their glibc, and cross supplies the C toolchain that musl
+  # needs for the target. The macOS binaries are for developing exarare rather
+  # than for recording a server, and build natively on a macOS runner.
   binaries:
     needs: create-release
     if: startsWith(github.ref, 'refs/tags/')
     name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            build-tool: cross
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            build-tool: cross
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            build-tool: cargo
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            build-tool: cargo
     steps:
       - uses: actions/checkout@v5
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: exarare
           target: ${{ matrix.target }}
-          build-tool: cross
+          build-tool: ${{ matrix.build-tool }}
           tar: unix
           zip: none
           checksum: sha256
@@ -125,40 +136,68 @@ jobs:
   # to a release.
   dry-run:
     if: github.event_name == 'workflow_dispatch'
-    name: dry run (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    name: dry run (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
             arch: x86_64
+            rpm: true
           - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
             arch: aarch64
+            rpm: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            arch: arm64
+            rpm: false
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            arch: x86_64
+            rpm: false
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - name: Install the packaging tools
+        if: matrix.rpm
         run: |
           cargo install cross --locked
           cargo install cargo-generate-rpm --locked
-      - name: Build
+      - name: Build with cross
+        if: matrix.rpm
         run: cross build --release --locked --target ${{ matrix.target }}
-      - name: Check that the binary is static
+      - name: Build with cargo
+        if: ${{ !matrix.rpm }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Check the binary
         run: |
           set -euo pipefail
           file "target/${{ matrix.target }}/release/exarare"
-          if file "target/${{ matrix.target }}/release/exarare" | grep -q "dynamically linked"; then
-            echo "::error::the binary is not statically linked"
-            exit 1
-          fi
+          # Only the musl builds are expected to be static. A macOS binary links
+          # against libSystem, which cannot be avoided and is not a fault.
+          case "${{ matrix.target }}" in
+            *-linux-musl)
+              if file "target/${{ matrix.target }}/release/exarare" | grep -q "dynamically linked"; then
+                echo "::error::the binary is not statically linked"
+                exit 1
+              fi
+              ;;
+          esac
       - name: Package
+        if: matrix.rpm
         run: cargo generate-rpm --target ${{ matrix.target }} --arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
-          name: exarare-${{ matrix.arch }}
+          # Named by target, not arch: x86_64 appears twice, once for musl and
+          # once for macOS, and two artifacts cannot share a name.
+          name: exarare-${{ matrix.target }}
           path: |
             target/${{ matrix.target }}/release/exarare
             target/${{ matrix.target }}/generate-rpm/*.rpm
+          # The RPM pattern matches nothing on macOS, which is expected.
+          if-no-files-found: warn

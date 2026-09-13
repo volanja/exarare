@@ -29,10 +29,15 @@ changed* inside the files you edited. Exarare combines:
 ## Installation
 
 Each release on the
-[Releases](https://github.com/volanja/exarare/releases) page carries a
-statically linked binary and an RPM for x86_64 and aarch64, with a SHA-256
-checksum beside each file. One static binary runs on EL 8, 9 and 10, whatever
-their glibc.
+[Releases](https://github.com/volanja/exarare/releases) page carries, with a
+SHA-256 checksum beside every file:
+
+| Platform | Files |
+|---|---|
+| Linux x86_64, aarch64 | a statically linked binary, and an RPM |
+| macOS arm64, x86_64 | a binary |
+
+One static Linux binary runs on EL 8, 9 and 10, whatever their glibc.
 
 ```sh
 # RPM
@@ -42,6 +47,11 @@ sudo dnf install ./exarare-0.1.0-1.x86_64.rpm
 tar xf exarare-x86_64-unknown-linux-musl.tar.gz
 sudo install -m 0755 exarare /usr/local/bin/
 ```
+
+The macOS binaries are for working on exarare, not for recording a production
+server. They are neither signed nor notarized, so Gatekeeper objects the first
+time; `xattr -d com.apple.quarantine exarare` clears it, or build from source
+instead.
 
 From source, with Rust 1.85 or later:
 

@@ -356,11 +356,17 @@ fn procedure<'a>(
             out.push('\n');
         }
         // The watcher knows when a write happened, not which command caused it,
-        // so a touch belongs to the step whose commands ran at that time.
-        if let Some((from, to)) = step.time_range() {
+        // so a touch belongs to the step that was running at that moment: from
+        // this step's first command until the next step's.
+        if let Some(from) = step.started_at() {
+            let until = runbook
+                .steps
+                .iter()
+                .skip(i + 1)
+                .find_map(|later| later.started_at());
             let in_step: Vec<&PathBuf> = input
                 .touched
-                .between(from, to)
+                .in_window(from, until)
                 .into_iter()
                 .filter(|path| unreported_set.contains(path.as_path()))
                 .collect();

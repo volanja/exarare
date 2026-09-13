@@ -156,11 +156,15 @@ mod paths_as_pairs {
 }
 
 impl Touched {
-    /// Paths first seen between two moments, for placing them in a step.
-    pub fn between(&self, from: OffsetDateTime, to: OffsetDateTime) -> Vec<&PathBuf> {
+    /// Paths first seen in `[from, until)`, or from `from` onwards when `until`
+    /// is `None`. A step's window runs until the next step begins rather than
+    /// until its own last command: a watcher reports with some delay — FSEvents
+    /// noticeably so — and a write during the work belongs to the step that was
+    /// running, however late the notification arrives.
+    pub fn in_window(&self, from: OffsetDateTime, until: Option<OffsetDateTime>) -> Vec<&PathBuf> {
         self.paths
             .iter()
-            .filter(|(_, seen)| **seen >= from && **seen <= to)
+            .filter(|(_, seen)| **seen >= from && until.is_none_or(|until| **seen < until))
             .map(|(path, _)| path)
             .collect()
     }
@@ -339,15 +343,35 @@ mod tests {
     fn selects_paths_by_when_they_were_seen() {
         let mut touched = Touched::default();
         let base = OffsetDateTime::UNIX_EPOCH;
+        let late = base + time::Duration::seconds(120);
         record(&mut touched, PathBuf::from("/opt/early"), base);
-        record(
-            &mut touched,
-            PathBuf::from("/opt/late"),
-            base + time::Duration::seconds(120),
-        );
+        record(&mut touched, PathBuf::from("/opt/late"), late);
 
-        let picked = touched.between(base, base + time::Duration::seconds(60));
-        assert_eq!(picked, vec![&PathBuf::from("/opt/early")]);
+        // A window ends where the next one starts, so its upper bound is
+        // exclusive and a path seen exactly then belongs to the next window.
+        let first = touched.in_window(base, Some(late));
+        assert_eq!(first, vec![&PathBuf::from("/opt/early")]);
+
+        // The last step has no next one, so its window has no end.
+        let last = touched.in_window(late, None);
+        assert_eq!(last, vec![&PathBuf::from("/opt/late")]);
+    }
+
+    /// The reason the window runs to the next step rather than to the step's own
+    /// last command: a watcher reports late, FSEvents especially so, and the
+    /// write still happened during that step's work.
+    #[test]
+    fn a_late_notification_still_lands_in_its_step() {
+        let mut touched = Touched::default();
+        let step_started = OffsetDateTime::UNIX_EPOCH;
+        let last_command = step_started + time::Duration::seconds(1);
+        let notified = last_command + time::Duration::seconds(3);
+        record(&mut touched, PathBuf::from("/opt/app.yaml"), notified);
+
+        assert!(
+            touched.in_window(step_started, None).len() == 1,
+            "a delayed event must not fall outside the step that caused it"
+        );
     }
 
     #[test]
